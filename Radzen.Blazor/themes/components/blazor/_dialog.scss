@@ -131,6 +131,7 @@ $dialog-zindex: 1001 !default;
     .rz-button {
         flex: 8rem 1;
         min-width: fit-content;
+        background-color: var(--rz-secondary) !important;
     }
 }
 
