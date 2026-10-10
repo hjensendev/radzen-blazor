@@ -8,7 +8,7 @@
 <RadzenScheduler @ref=@scheduler SlotRender=@OnSlotRender style="height: 768px;" TItem="Appointment" Data=@appointments StartProperty="Start" EndProperty="End" ShowHeader=@showHeader
                  TextProperty="Text" SelectedIndex="2"
     SlotSelect=@OnSlotSelect AppointmentSelect=@OnAppointmentSelect AppointmentRender=@OnAppointmentRender DaySelect="@OnDaySelect"
-    AppointmentMove=@OnAppointmentMove >
+    AppointmentMove=@OnAppointmentMove AppointmentResize=@OnAppointmentResize >
     <RadzenDayView />
     <RadzenWeekView />
     <RadzenMonthView />
@@ -31,6 +31,8 @@
         new Appointment { Start = DateTime.Today.AddHours(10), End = DateTime.Today.AddHours(12), Text = "Online meeting" },
         new Appointment { Start = DateTime.Today.AddHours(10), End = DateTime.Today.AddHours(13), Text = "Skype call" },
         new Appointment { Start = DateTime.Today.AddHours(14), End = DateTime.Today.AddHours(14).AddMinutes(30), Text = "Dentist appointment" },
+        new Appointment { Start = DateTime.Today.AddHours(15), End = DateTime.Today.AddHours(16), Text = "Team standup" },
+        new Appointment { Start = DateTime.Today.AddHours(16), End = DateTime.Today.AddHours(17), Text = "Code review" },
         new Appointment { Start = DateTime.Today.AddDays(1), End = DateTime.Today.AddDays(12), Text = "Vacation" },
     };
 
@@ -112,9 +114,33 @@
 
         if (draggedAppointment != null)
         {
-            draggedAppointment.Start = draggedAppointment.Start + args.TimeSpan;
+            var duration = draggedAppointment.End - draggedAppointment.Start;
 
-            draggedAppointment.End = draggedAppointment.End + args.TimeSpan;
+            if (args.SlotDate.TimeOfDay == TimeSpan.Zero)
+            {
+                draggedAppointment.Start = args.SlotDate.Date.Add(draggedAppointment.Start.TimeOfDay);
+            }
+            else
+            {
+                draggedAppointment.Start = args.SlotDate;
+            }
+
+            draggedAppointment.End = draggedAppointment.Start.Add(duration);
+
+            await scheduler.Reload();
+        }
+    }
+
+    async Task OnAppointmentResize(SchedulerAppointmentResizeEventArgs args)
+    {
+        var resizedAppointment = appointments.FirstOrDefault(x => x == args.Appointment.Data);
+
+        if (resizedAppointment != null)
+        {
+            resizedAppointment.Start = args.Start;
+            resizedAppointment.End = args.End;
+
+            console.Log($"AppointmentResize: Appointment={resizedAppointment.Text} Start={args.Start} End={args.End}");
 
             await scheduler.Reload();
         }

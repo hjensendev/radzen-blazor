@@ -46,7 +46,7 @@ namespace Radzen.Blazor.Tests
 
             component.SetParametersAndRender(parameters => parameters.Add(p => p.Icon, value));
 
-            Assert.Contains(@$"<i class=""notranslate rzi"">{value}</i>", component.Markup);
+            Assert.Contains(@$"<i class=""notranslate rzi"" aria-hidden=""true"">{value}</i>", component.Markup);
         }
 
         [Fact]
@@ -152,7 +152,7 @@ namespace Radzen.Blazor.Tests
                 parameters.Add(p => p.Collapse, args => { raised = true; });
             });
 
-            component.Find("a").Click();
+            component.Find("legend button").Click();
 
             Assert.True(raised);
 
@@ -160,7 +160,7 @@ namespace Radzen.Blazor.Tests
 
             component.SetParametersAndRender(parameters => parameters.Add(p => p.Expand, args => { raised = true; }));
 
-            component.Find("a").Click();
+            component.Find("legend button").Click();
         }
 
         [Fact]
@@ -184,13 +184,13 @@ namespace Radzen.Blazor.Tests
 
             Assert.Contains("SummaryContent", component.Markup);
             Assert.Equal(
-                "",
-                component.Find(".rz-fieldset-content-summary").ParentElement.Attributes.First(attr => attr.Name == "style").Value
+                "false",
+                component.Find(".rz-fieldset-content-summary").ParentElement.ParentElement.Attributes.First(attr => attr.Name == "aria-hidden").Value
             );
         }
 
         [Fact]
-        public void Fieldset_DontRenders_SummaryWhenOpen()
+        public void Fieldset_DoesNotRender_SummaryWhenOpen()
         {
             using var ctx = new TestContext();
             var component = ctx.RenderComponent<RadzenFieldset>();
@@ -210,8 +210,8 @@ namespace Radzen.Blazor.Tests
 
             Assert.Contains("SummaryContent", component.Markup);
             Assert.Equal(
-                "display: none",
-                component.Find(".rz-fieldset-content-summary").ParentElement.Attributes.First(attr => attr.Name == "style").Value
+                "true",
+                component.Find(".rz-fieldset-content-summary").ParentElement.ParentElement.Attributes.First(attr => attr.Name == "aria-hidden").Value
             );
         }
     }

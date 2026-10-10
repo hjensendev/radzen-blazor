@@ -1,0 +1,535 @@
+using Bunit;
+using Xunit;
+using System.Collections.Generic;
+using System.Linq;
+using Microsoft.AspNetCore.Components.Web;
+
+namespace Radzen.Blazor.Tests
+{
+    public class ListBoxTests
+    {
+        class Item
+        {
+            public int Id { get; set; }
+            public string Name { get; set; }
+        }
+
+        [Fact]
+        public void ListBox_Renders_WithClassName()
+        {
+            using var ctx = new TestContext();
+            ctx.JSInterop.Mode = JSRuntimeMode.Loose;
+            var component = ctx.RenderComponent<RadzenListBox<int>>();
+
+            Assert.Contains(@"rz-listbox", component.Markup);
+        }
+
+        [Fact]
+        public void ListBox_Renders_WithData_SimpleList()
+        {
+            using var ctx = new TestContext();
+            ctx.JSInterop.Mode = JSRuntimeMode.Loose;
+            var data = new List<string> { "Apple", "Banana", "Cherry" };
+            
+            var component = ctx.RenderComponent<RadzenListBox<string>>(parameters =>
+            {
+                parameters.Add(p => p.Data, data);
+            });
+
+            Assert.Contains("Apple", component.Markup);
+            Assert.Contains("Banana", component.Markup);
+            Assert.Contains("Cherry", component.Markup);
+        }
+
+        [Fact]
+        public void ListBox_Renders_WithData_CustomTextValueProperties()
+        {
+            using var ctx = new TestContext();
+            ctx.JSInterop.Mode = JSRuntimeMode.Loose;
+            var data = new List<Item>
+            {
+                new Item { Id = 1, Name = "First Item" },
+                new Item { Id = 2, Name = "Second Item" }
+            };
+            
+            var component = ctx.RenderComponent<RadzenListBox<int>>(parameters =>
+            {
+                parameters.Add(p => p.Data, data);
+                parameters.Add(p => p.TextProperty, "Name");
+                parameters.Add(p => p.ValueProperty, "Id");
+            });
+
+            Assert.Contains("First Item", component.Markup);
+            Assert.Contains("Second Item", component.Markup);
+        }
+
+        [Fact]
+        public void ListBox_Renders_AllowFiltering()
+        {
+            using var ctx = new TestContext();
+            ctx.JSInterop.Mode = JSRuntimeMode.Loose;
+            var component = ctx.RenderComponent<RadzenListBox<int>>(parameters =>
+            {
+                parameters.Add(p => p.AllowFiltering, true);
+                parameters.Add(p => p.Data, new List<string> { "Item1", "Item2" });
+            });
+
+            Assert.Contains("rz-listbox-filter", component.Markup);
+            Assert.Contains("rz-listbox-header", component.Markup);
+        }
+
+        [Fact]
+        public void ListBox_Renders_Disabled_Attribute()
+        {
+            using var ctx = new TestContext();
+            ctx.JSInterop.Mode = JSRuntimeMode.Loose;
+            var component = ctx.RenderComponent<RadzenListBox<int>>(parameters =>
+            {
+                parameters.Add(p => p.Disabled, true);
+            });
+
+            Assert.Contains("disabled", component.Markup);
+        }
+
+        [Fact]
+        public void ListBox_Renders_Multiple_WithSelectAll()
+        {
+            using var ctx = new TestContext();
+            ctx.JSInterop.Mode = JSRuntimeMode.Loose;
+            var component = ctx.RenderComponent<RadzenListBox<IEnumerable<int>>>(parameters =>
+            {
+                parameters.Add(p => p.Multiple, true);
+                parameters.Add(p => p.SelectAllText, "Select All Items");
+                parameters.Add(p => p.Data, new List<string> { "Item1", "Item2" });
+            });
+
+            Assert.Contains("Select All Items", component.Markup);
+            Assert.Contains("rz-chkbox", component.Markup);
+        }
+
+        [Fact]
+        public void ListBox_Renders_FilterPlaceholder()
+        {
+            using var ctx = new TestContext();
+            ctx.JSInterop.Mode = JSRuntimeMode.Loose;
+            var component = ctx.RenderComponent<RadzenListBox<int>>(parameters =>
+            {
+                parameters.Add(p => p.Placeholder, "Select an item");
+                parameters.Add(p => p.AllowFiltering, true);
+                parameters.Add(p => p.Data, new List<string> { "Item1", "Item2" });
+            });
+
+            Assert.Contains("Select an item", component.Markup);
+        }
+
+        [Fact]
+        public void ListBox_Renders_Multiple_WithCheckboxes()
+        {
+            using var ctx = new TestContext();
+            ctx.JSInterop.Mode = JSRuntimeMode.Loose;
+            var data = new List<string> { "Item1", "Item2" };
+
+            var component = ctx.RenderComponent<RadzenListBox<IEnumerable<string>>>(parameters =>
+            {
+                parameters.Add(p => p.Multiple, true);
+                parameters.Add(p => p.Data, data);
+            });
+
+            // Multiple selection shows checkboxes in header
+            Assert.Contains("rz-listbox-header-w-checkbox", component.Markup);
+        }
+
+        [Fact]
+        public void ListBox_Renders_ReadOnly()
+        {
+            using var ctx = new TestContext();
+            ctx.JSInterop.Mode = JSRuntimeMode.Loose;
+            var component = ctx.RenderComponent<RadzenListBox<int>>(parameters =>
+            {
+                parameters.Add(p => p.ReadOnly, true);
+            });
+
+            Assert.Contains("readonly", component.Markup);
+        }
+
+        [Fact]
+        public void ListBox_Renders_TabIndex()
+        {
+            using var ctx = new TestContext();
+            ctx.JSInterop.Mode = JSRuntimeMode.Loose;
+            var component = ctx.RenderComponent<RadzenListBox<int>>();
+
+            Assert.Contains("tabindex=", component.Markup);
+        }
+
+        [Fact]
+        public void ListBox_Renders_ListWrapper()
+        {
+            using var ctx = new TestContext();
+            ctx.JSInterop.Mode = JSRuntimeMode.Loose;
+            var data = new List<string> { "Item1" };
+
+            var component = ctx.RenderComponent<RadzenListBox<string>>(parameters =>
+            {
+                parameters.Add(p => p.Data, data);
+            });
+
+            Assert.Contains("rz-listbox-list-wrapper", component.Markup);
+            Assert.Contains("rz-listbox-list", component.Markup);
+        }
+
+        [Fact]
+        public void ListBox_Renders_SearchAriaLabel()
+        {
+            using var ctx = new TestContext();
+            ctx.JSInterop.Mode = JSRuntimeMode.Loose;
+            var component = ctx.RenderComponent<RadzenListBox<int>>(parameters =>
+            {
+                parameters.Add(p => p.AllowFiltering, true);
+                parameters.Add(p => p.SearchAriaLabel, "Search items");
+                parameters.Add(p => p.Data, new List<string> { "Item1" });
+            });
+
+            Assert.Contains("aria-label=\"Search items\"", component.Markup);
+        }
+
+        [Fact]
+        public void ListBox_Renders_DefaultEmptyText_WhenNoData()
+        {
+            using var ctx = new TestContext();
+            ctx.JSInterop.Mode = JSRuntimeMode.Loose;
+            var component = ctx.RenderComponent<RadzenListBox<int>>();
+
+            Assert.Contains("rz-listbox-empty-message", component.Markup);
+            Assert.Contains("No records to display.", component.Markup);
+        }
+
+        [Fact]
+        public void ListBox_Renders_CustomEmptyText_WhenNoData()
+        {
+            using var ctx = new TestContext();
+            ctx.JSInterop.Mode = JSRuntimeMode.Loose;
+            var component = ctx.RenderComponent<RadzenListBox<int>>(parameters =>
+            {
+                parameters.Add(p => p.EmptyText, "Nothing here");
+            });
+
+            Assert.Contains("rz-listbox-empty-message", component.Markup);
+            Assert.Contains("Nothing here", component.Markup);
+        }
+
+        [Fact]
+        public void ListBox_Renders_EmptyTemplate_WhenNoData()
+        {
+            using var ctx = new TestContext();
+            ctx.JSInterop.Mode = JSRuntimeMode.Loose;
+            var component = ctx.RenderComponent<RadzenListBox<int>>(parameters =>
+            {
+                parameters.Add(p => p.EmptyTemplate, builder => builder.AddContent(0, "Custom empty content"));
+            });
+
+            Assert.Contains("rz-listbox-empty-message", component.Markup);
+            Assert.Contains("Custom empty content", component.Markup);
+        }
+
+        [Fact]
+        public void ListBox_Renders_EmptyText_WhenDataIsEmptyList()
+        {
+            using var ctx = new TestContext();
+            ctx.JSInterop.Mode = JSRuntimeMode.Loose;
+            var component = ctx.RenderComponent<RadzenListBox<int>>(parameters =>
+            {
+                parameters.Add(p => p.Data, new List<string>());
+                parameters.Add(p => p.EmptyText, "List is empty");
+            });
+
+            Assert.Contains("rz-listbox-empty-message", component.Markup);
+            Assert.Contains("List is empty", component.Markup);
+        }
+
+        [Fact]
+        public void ListBox_DoesNotRender_EmptyMessage_WhenDataExists()
+        {
+            using var ctx = new TestContext();
+            ctx.JSInterop.Mode = JSRuntimeMode.Loose;
+            var component = ctx.RenderComponent<RadzenListBox<int>>(parameters =>
+            {
+                parameters.Add(p => p.Data, new List<string> { "Item1" });
+            });
+
+            Assert.DoesNotContain("rz-listbox-empty-message", component.Markup);
+        }
+
+        [Fact]
+        public void ListBox_Renders_ListboxRole_OnFocusableElement()
+        {
+            using var ctx = new TestContext();
+            ctx.JSInterop.Mode = JSRuntimeMode.Loose;
+
+            var component = ctx.RenderComponent<RadzenListBox<string>>(parameters =>
+            {
+                parameters.Add(p => p.Data, new List<string> { "Apple", "Banana" });
+            });
+
+            var listbox = component.Find("ul[role=\"listbox\"]");
+
+            Assert.NotNull(listbox.GetAttribute("tabindex"));
+            Assert.Equal("false", listbox.GetAttribute("aria-multiselectable"));
+        }
+
+        [Fact]
+        public void ListBox_Renders_AccessibleName()
+        {
+            using var ctx = new TestContext();
+            ctx.JSInterop.Mode = JSRuntimeMode.Loose;
+
+            var component = ctx.RenderComponent<RadzenListBox<string>>(parameters =>
+            {
+                parameters.Add(p => p.Data, new List<string> { "Apple", "Banana" });
+                parameters.Add(p => p.EmptyAriaLabel, "Fruits");
+            });
+
+            var listbox = component.Find("ul[role=\"listbox\"]");
+
+            Assert.Equal("Fruits", listbox.GetAttribute("aria-label"));
+        }
+
+        [Fact]
+        public void ListBox_Renders_Multiselectable_WhenMultiple()
+        {
+            using var ctx = new TestContext();
+            ctx.JSInterop.Mode = JSRuntimeMode.Loose;
+
+            var component = ctx.RenderComponent<RadzenListBox<IEnumerable<string>>>(parameters =>
+            {
+                parameters.Add(p => p.Multiple, true);
+                parameters.Add(p => p.Data, new List<string> { "Apple", "Banana" });
+            });
+
+            var listbox = component.Find("ul[role=\"listbox\"]");
+
+            Assert.Equal("true", listbox.GetAttribute("aria-multiselectable"));
+        }
+
+        [Fact]
+        public void ListBox_Renders_Options_WithStableIds()
+        {
+            using var ctx = new TestContext();
+            ctx.JSInterop.Mode = JSRuntimeMode.Loose;
+
+            var component = ctx.RenderComponent<RadzenListBox<string>>(parameters =>
+            {
+                parameters.Add(p => p.Data, new List<string> { "Apple", "Banana", "Cherry" });
+            });
+
+            var options = component.FindAll("li[role=\"option\"]");
+
+            Assert.Equal(3, options.Count);
+
+            foreach (var option in options)
+            {
+                Assert.False(string.IsNullOrEmpty(option.GetAttribute("id")));
+            }
+
+            Assert.Equal(options.Count, options.Select(o => o.GetAttribute("id")).Distinct().Count());
+        }
+
+        [Fact]
+        public void ListBox_Renders_AriaSelected_OnSelectedOption()
+        {
+            using var ctx = new TestContext();
+            ctx.JSInterop.Mode = JSRuntimeMode.Loose;
+
+            var component = ctx.RenderComponent<RadzenListBox<string>>(parameters =>
+            {
+                parameters.Add(p => p.Data, new List<string> { "Apple", "Banana", "Cherry" });
+                parameters.Add(p => p.Value, "Banana");
+            });
+
+            var options = component.FindAll("li[role=\"option\"]");
+
+            Assert.Equal("false", options[0].GetAttribute("aria-selected"));
+            Assert.Equal("true", options[1].GetAttribute("aria-selected"));
+            Assert.Equal("false", options[2].GetAttribute("aria-selected"));
+        }
+
+        [Fact]
+        public void ListBox_Exposes_ActiveDescendant_AsFocusMoves()
+        {
+            using var ctx = new TestContext();
+            ctx.JSInterop.Mode = JSRuntimeMode.Loose;
+            ctx.JSInterop.Setup<int>("Radzen.focusListItem", _ => true).SetResult(0);
+            ctx.JSInterop.Setup<bool>("Radzen.popupOpened", _ => true).SetResult(false);
+
+            var component = ctx.RenderComponent<RadzenListBox<string>>(parameters =>
+            {
+                parameters.Add(p => p.Data, new List<string> { "Apple", "Banana", "Cherry" });
+            });
+
+            var listbox = component.Find("ul[role=\"listbox\"]");
+
+            Assert.True(string.IsNullOrEmpty(listbox.GetAttribute("aria-activedescendant")));
+
+            listbox.KeyDown(new KeyboardEventArgs { Key = "ArrowDown" });
+
+            listbox = component.Find("ul[role=\"listbox\"]");
+            var active = listbox.GetAttribute("aria-activedescendant");
+
+            Assert.False(string.IsNullOrEmpty(active));
+
+            var activeOption = component.Find($"li[id=\"{active}\"]");
+            Assert.Equal("option", activeOption.GetAttribute("role"));
+        }
+
+        [Fact]
+        public void ListBox_Renders_LoadingTemplate_WhenIsLoading()
+        {
+            using var ctx = new TestContext();
+            ctx.JSInterop.Mode = JSRuntimeMode.Loose;
+            var data = new List<string> { "Apple", "Banana" };
+
+            var component = ctx.RenderComponent<RadzenListBox<string>>(parameters =>
+            {
+                parameters
+                    .Add(p => p.Data, data)
+                    .Add(p => p.IsLoading, true)
+                    .Add(p => p.LoadingTemplate, b => b.AddMarkupContent(0, "<span class=\"loading-marker\">Loading...</span>"));
+            });
+
+            Assert.Contains("loading-marker", component.Markup);
+            Assert.DoesNotContain("Apple", component.Markup);
+            Assert.DoesNotContain("Banana", component.Markup);
+        }
+
+        [Fact]
+        public void ListBox_DoesNotRender_LoadingTemplate_WhenNotLoading()
+        {
+            using var ctx = new TestContext();
+            ctx.JSInterop.Mode = JSRuntimeMode.Loose;
+            var data = new List<string> { "Apple", "Banana" };
+
+            var component = ctx.RenderComponent<RadzenListBox<string>>(parameters =>
+            {
+                parameters
+                    .Add(p => p.Data, data)
+                    .Add(p => p.LoadingTemplate, b => b.AddMarkupContent(0, "<span class=\"loading-marker\">Loading...</span>"));
+            });
+
+            Assert.DoesNotContain("loading-marker", component.Markup);
+            Assert.Contains("Apple", component.Markup);
+        }
+
+        [Fact]
+        public void ListBox_Suppresses_EmptyTemplate_WhileLoading()
+        {
+            using var ctx = new TestContext();
+            ctx.JSInterop.Mode = JSRuntimeMode.Loose;
+
+            var component = ctx.RenderComponent<RadzenListBox<string>>(parameters =>
+            {
+                parameters
+                    .Add(p => p.Data, new List<string>())
+                    .Add(p => p.IsLoading, true)
+                    .Add(p => p.EmptyTemplate, b => b.AddMarkupContent(0, "<span class=\"empty-marker\">No data</span>"));
+            });
+
+            Assert.DoesNotContain("empty-marker", component.Markup);
+        }
+
+        [Fact]
+        public void ListBox_Multiple_CtrlA_SelectsAllItems()
+        {
+            using var ctx = new TestContext();
+            ctx.JSInterop.Mode = JSRuntimeMode.Loose;
+            var data = new List<Item>
+            {
+                new Item { Id = 1, Name = "First Item" },
+                new Item { Id = 2, Name = "Second Item" }
+            };
+
+            IEnumerable<int> value = null;
+            var component = ctx.RenderComponent<RadzenListBox<IEnumerable<int>>>(parameters =>
+            {
+                parameters.Add(p => p.Multiple, true);
+                parameters.Add(p => p.Data, data);
+                parameters.Add(p => p.TextProperty, "Name");
+                parameters.Add(p => p.ValueProperty, "Id");
+                parameters.Add(p => p.ValueChanged, v => value = v);
+            });
+
+            var root = component.Find("div.rz-listbox");
+            root.KeyDown(new KeyboardEventArgs { Key = "a", Code = "KeyA", CtrlKey = true });
+
+            Assert.Equal(new[] { 1, 2 }, value);
+        }
+
+        [Fact]
+        public void ListBox_Multiple_CtrlA_DoesNothingWhenReadOnly()
+        {
+            using var ctx = new TestContext();
+            ctx.JSInterop.Mode = JSRuntimeMode.Loose;
+            var data = new List<Item>
+            {
+                new Item { Id = 1, Name = "First Item" },
+                new Item { Id = 2, Name = "Second Item" }
+            };
+
+            IEnumerable<int> value = null;
+            var component = ctx.RenderComponent<RadzenListBox<IEnumerable<int>>>(parameters =>
+            {
+                parameters.Add(p => p.Multiple, true);
+                parameters.Add(p => p.ReadOnly, true);
+                parameters.Add(p => p.Data, data);
+                parameters.Add(p => p.TextProperty, "Name");
+                parameters.Add(p => p.ValueProperty, "Id");
+                parameters.Add(p => p.ValueChanged, v => value = v);
+            });
+
+            var root = component.Find("div.rz-listbox");
+            root.KeyDown(new KeyboardEventArgs { Key = "a", Code = "KeyA", CtrlKey = true });
+
+            Assert.Null(value);
+        }
+
+        [Fact]
+        public void ListBox_OmitsOptionAriaLabel_WhenTextPropertyIsMissingAndItemHasNoText()
+        {
+            using var ctx = new TestContext();
+            ctx.JSInterop.Mode = JSRuntimeMode.Loose;
+
+            var data = new[] { new Item { Id = 1, Name = "First" }, new Item { Id = 2, Name = "Second" } };
+
+            var component = ctx.RenderComponent<RadzenListBox<int>>(parameters =>
+            {
+                parameters.Add(p => p.Data, data);
+                parameters.Add(p => p.ValueProperty, nameof(Item.Id));
+            });
+
+            var options = component.FindAll("li[role='option']");
+
+            Assert.NotEmpty(options);
+            Assert.All(options, option => Assert.False(option.HasAttribute("aria-label")));
+        }
+
+        [Fact]
+        public void ListBox_RendersOptionAriaLabel_FromTextProperty()
+        {
+            using var ctx = new TestContext();
+            ctx.JSInterop.Mode = JSRuntimeMode.Loose;
+
+            var data = new[] { new Item { Id = 1, Name = "First" }, new Item { Id = 2, Name = "Second" } };
+
+            var component = ctx.RenderComponent<RadzenListBox<int>>(parameters =>
+            {
+                parameters.Add(p => p.Data, data);
+                parameters.Add(p => p.TextProperty, nameof(Item.Name));
+                parameters.Add(p => p.ValueProperty, nameof(Item.Id));
+            });
+
+            var options = component.FindAll("li[role='option']");
+
+            Assert.Equal("First", options[0].GetAttribute("aria-label"));
+            Assert.Equal("Second", options[1].GetAttribute("aria-label"));
+        }
+    }
+}

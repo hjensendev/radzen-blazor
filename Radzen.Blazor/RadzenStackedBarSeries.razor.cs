@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using Microsoft.AspNetCore.Components;
 using Radzen.Blazor.Rendering;
 using System;
@@ -10,35 +11,35 @@ namespace Radzen.Blazor
     /// Renders bar series in <see cref="RadzenChart" />.
     /// </summary>
     /// <typeparam name="TItem">The type of the series data item.</typeparam>
-    public partial class RadzenStackedBarSeries<TItem> : CartesianSeries<TItem>, IChartStackedBarSeries
+    public partial class RadzenStackedBarSeries<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.PublicFields)] TItem> : CartesianSeries<TItem>, IChartStackedBarSeries
     {
         /// <summary>
         /// Specifies the fill (background color) of the bar series.
         /// </summary>
         /// <value>The fill.</value>
         [Parameter]
-        public string Fill { get; set; }
+        public string? Fill { get; set; }
 
         /// <summary>
         /// Specifies a list of colors that will be used to set the individual bar backgrounds.
         /// </summary>
         /// <value>The fills.</value>
         [Parameter]
-        public IEnumerable<string> Fills { get; set; }
+        public IEnumerable<string>? Fills { get; set; }
 
         /// <summary>
         /// Specifies the stroke (border color) of the bar series.
         /// </summary>
         /// <value>The stroke.</value>
         [Parameter]
-        public string Stroke { get; set; }
+        public string? Stroke { get; set; }
 
         /// <summary>
         /// Specifies a list of colors that will be used to set the individual bar borders.
         /// </summary>
         /// <value>The strokes.</value>
         [Parameter]
-        public IEnumerable<string> Strokes { get; set; }
+        public IEnumerable<string>? Strokes { get; set; }
 
         /// <summary>
         /// Gets or sets the width of the stroke (border).
@@ -59,36 +60,64 @@ namespace Radzen.Blazor
         /// </summary>
         /// <value>The color range of the fill.</value>
         [Parameter]
-        public IList<SeriesColorRange> FillRange { get; set; }
+        public IList<SeriesColorRange>? FillRange { get; set; }
 
         /// <summary>
         /// Gets or sets the color range of the stroke.
         /// </summary>
         /// <value>The color range of the stroke.</value>
         [Parameter]
-        public IList<SeriesColorRange> StrokeRange { get; set; }
+        public IList<SeriesColorRange>? StrokeRange { get; set; }
+
+        /// <summary>
+        /// Specifies how the series is filled. Set to <see cref="FillMode.Solid"/> by default.
+        /// Use <see cref="FillMode.Gradient"/> for a fill that fades toward the axis baseline, or <see cref="FillMode.None"/> to render only the outline.
+        /// </summary>
+        /// <value>The fill mode. Default is <see cref="FillMode.Solid"/>.</value>
+        [Parameter]
+        public FillMode FillMode { get; set; } = FillMode.Solid;
+
+        /// <summary>
+        /// Specifies the opacity at the value end of the gradient fill. Used when <see cref="FillMode"/> is <see cref="FillMode.Gradient"/>.
+        /// </summary>
+        /// <value>The gradient start opacity. Default is <c>0.85</c>.</value>
+        [Parameter]
+        public double GradientStartOpacity { get; set; } = 0.85;
+
+        /// <summary>
+        /// Specifies the opacity at the baseline of the gradient fill. Used when <see cref="FillMode"/> is <see cref="FillMode.Gradient"/>.
+        /// </summary>
+        /// <value>The gradient end opacity. Default is <c>0.4</c>.</value>
+        [Parameter]
+        public double GradientEndOpacity { get; set; } = 0.4;
 
         /// <inheritdoc />
         public override string Color
         {
             get
             {
-                return Fill;
+                return Fill ?? string.Empty;
             }
         }
 
         /// <inheritdoc />
         public override ScaleBase TransformCategoryScale(ScaleBase scale)
         {
+            ArgumentNullException.ThrowIfNull(scale);
+
             if (Items.Any())
             {
                 var stackedBarSeries = BarSeries.Cast<IChartStackedBarSeries>();
                 var count = stackedBarSeries.Max(series => series.Count);
-                var sums = Enumerable.Range(0, count).Select(i => stackedBarSeries.Sum(series => series.ValueAt(i)));
-                var max = sums.Max();
-                var min = Items.Min(Value);
+                var categories = Enumerable.Range(0, count);
 
-                scale.Input.MergeWidth(new ScaleRange { Start = min, End = max });
+                var positiveSums = categories.Select(i => stackedBarSeries.Sum(series => Math.Max(0, series.ValueAt(i))));
+                var negativeSums = categories.Select(i => stackedBarSeries.Sum(series => Math.Min(0, series.ValueAt(i))));
+
+                var maxPositive = positiveSums.Max();
+                var minNegative = negativeSums.Min();
+
+                scale.Input.MergeWidth(new ScaleRange { Start = minNegative, End = maxPositive });
             }
 
             return scale;
@@ -97,6 +126,8 @@ namespace Radzen.Blazor
         /// <inheritdoc />
         public override ScaleBase TransformValueScale(ScaleBase scale)
         {
+            ArgumentNullException.ThrowIfNull(scale);
+
             return base.TransformCategoryScale(scale);
         }
 
@@ -106,7 +137,7 @@ namespace Radzen.Blazor
             return base.GetCategories().Reverse().ToList();
         }
 
-        private IList<IChartSeries> BarSeries => Chart.Series.Where(series => series is IChartStackedBarSeries).Cast<IChartSeries>().ToList();
+        private IList<IChartSeries> BarSeries => Chart?.Series?.Where(series => series is IChartStackedBarSeries).Cast<IChartSeries>().ToList() ?? new List<IChartSeries>();
 
         private IList<IChartSeries> VisibleBarSeries => BarSeries.Where(series => series.Visible).ToList();
 
@@ -138,53 +169,106 @@ namespace Radzen.Blazor
             {
                 var barSeries = VisibleBarSeries;
 
-                if (Chart.BarOptions.Height.HasValue)
+                if (Chart?.BarOptions?.Height.HasValue == true)
                 {
                     return Chart.BarOptions.Height.Value * barSeries.Count;
                 }
-                else
+                else if (Chart?.BarOptions?.CategoryGap is double gap)
+                {
+                    var step = System.Math.Abs(Chart.ValueScale.Scale(1, true) - Chart.ValueScale.Scale(0, true));
+                    return step * (1 - gap);
+                }
+                else if (Chart != null)
                 {
                     var availableHeight = Chart.ValueScale.OutputSize; // - (Chart.ValueAxis.Padding * 2);
                     var bands = barSeries.Cast<IChartStackedBarSeries>().Max(series => series.Count) + 2;
                     return availableHeight / bands;
                 }
+
+                return 0;
             }
         }
 
-        double BarHeight => Chart.BarOptions.Height ?? BandHeight - Chart.BarOptions.Margin;
+        double BarHeight
+        {
+            get
+            {
+                if (Chart == null)
+                {
+                    return 0;
+                }
+
+                var h = Chart.BarOptions.Height ?? (BandHeight - Chart.BarOptions.Margin);
+                var max = Chart.BarOptions.EffectiveMaxHeight;
+                return max is double m && h > m ? m : h;
+            }
+        }
 
         int BarIndex => VisibleBarSeries.IndexOf(this);
 
-        private double GetBarTop(TItem item, Func<TItem, double> category = null)
+        private double GetBarTop(TItem item, Func<TItem, double>? category = null)
         {
+            if (Chart == null)
+            {
+                return 0;
+            }
+
             category = category ?? ComposeCategory(Chart.ValueScale);
 
             return category(item) - BarHeight / 2;
         }
 
-        private static double Sum(int barIndex, IEnumerable<IChartStackedBarSeries> stackedBarSeries, double category)
+        private static (double positiveSum, double negativeSum) Sum(int barIndex, IEnumerable<IChartStackedBarSeries> stackedBarSeries, double category)
         {
-            return stackedBarSeries.Take(barIndex).SelectMany(series => series.ValuesForCategory(category)).DefaultIfEmpty(0).Sum();
+            var values = stackedBarSeries.Take(barIndex).SelectMany(series => series.ValuesForCategory(category)).DefaultIfEmpty(0).ToList();
+            var positiveSum = values.Where(v => v >= 0).DefaultIfEmpty(0).Sum();
+            var negativeSum = values.Where(v => v < 0).DefaultIfEmpty(0).Sum();
+            return (positiveSum, negativeSum);
         }
-
         private double GetBarRight(TItem item, int barIndex, Func<TItem, double> category, IEnumerable<IChartStackedBarSeries> stackedBarSeries)
         {
-            var count = stackedBarSeries.Max(series => series.Count);
+            var value = Value(item);
+            var (positiveSum, negativeSum) = Sum(barIndex, stackedBarSeries, category(item));
 
-            var sum = Sum(barIndex, stackedBarSeries, category(item));
+            if (Chart == null)
+            {
+                return 0;
+            }
 
-            var y = Chart.CategoryScale.Scale(Value(item) + sum);
-
-            return y;
+            if (value >= 0)
+            {
+                var y = Chart.CategoryScale.Scale(value + positiveSum);
+                return y;
+            }
+            else
+            {
+                var y = Chart.CategoryScale.Scale(negativeSum);
+                return y;
+            }
         }
 
         private double GetBarLeft(TItem item, int barIndex, Func<TItem, double> category, IEnumerable<IChartStackedBarSeries> stackedBarSeries)
         {
-            var ticks = Chart.CategoryScale.Ticks(Chart.ValueAxis.TickDistance);
+            var value = Value(item);
+            var (positiveSum, negativeSum) = Sum(barIndex, stackedBarSeries, category(item));
 
-            var sum = Sum(barIndex, stackedBarSeries, category(item));
+            if (Chart == null)
+            {
+                return 0;
+            }
 
-            return Chart.CategoryScale.Scale(Math.Max(ticks.Start, sum));
+            if (value >= 0)
+            {
+                var ticks = Chart.CategoryScale.Ticks(Chart.ValueAxis.TickDistance);
+                var sum = Math.Max(ticks.Start, positiveSum);
+                return Chart.CategoryScale.Scale(sum);
+            }
+            else
+            {
+                var ticks = Chart.CategoryScale.Ticks(Chart.ValueAxis.TickDistance);
+                var sum = Math.Max(ticks.Start, negativeSum + value);
+                return Chart.CategoryScale.Scale(sum);
+            }
         }
 
         int IChartBarSeries.Count
@@ -206,7 +290,7 @@ namespace Radzen.Blazor
 
         IEnumerable<double> IChartStackedBarSeries.ValuesForCategory(double value)
         {
-            if (Items == null)
+            if (Items == null || Chart == null)
             {
                 return Enumerable.Empty<double>();
             }
@@ -218,7 +302,7 @@ namespace Radzen.Blazor
 
         IEnumerable<object> IChartStackedBarSeries.ItemsForCategory(double value)
         {
-            if (Items == null)
+            if (Items == null || Chart == null)
             {
                 return Enumerable.Empty<object>();
             }
@@ -237,6 +321,11 @@ namespace Radzen.Blazor
         /// <inheritdoc />
         internal override double TooltipX(TItem item)
         {
+            if (Chart == null)
+            {
+                return 0;
+            }
+
             var category = ComposeCategory(Chart.ValueScale);
 
             return GetBarRight(item, BarIndex, category, StackedBarSeries);
@@ -245,12 +334,22 @@ namespace Radzen.Blazor
         /// <inheritdoc />
         protected override string TooltipValue(TItem item)
         {
+            if (Chart == null)
+            {
+                return "";
+            }
+
             return Chart.ValueAxis.Format(Chart.CategoryScale, Chart.CategoryScale.Value(Value(item)));
         }
 
         /// <inheritdoc />
         protected override string TooltipTitle(TItem item)
         {
+            if (Chart == null)
+            {
+                return "";
+            }
+
             var category = Category(Chart.ValueScale);
             return Chart.CategoryAxis.Format(Chart.ValueScale, Chart.ValueScale.Value(category(item)));
         }
@@ -258,6 +357,11 @@ namespace Radzen.Blazor
         /// <inheritdoc />
         public override (object, Point) DataAt(double x, double y)
         {
+            if (Chart == null)
+            {
+                return (default!, new Point());
+            }
+
             var category = ComposeCategory(Chart.ValueScale);
             var barSeries = VisibleBarSeries;
             var barIndex = BarIndex;
@@ -267,17 +371,22 @@ namespace Radzen.Blazor
                 var startY = GetBarTop(data, category);
                 var endY = startY + BandHeight;
                 var dataX = GetBarRight(data, barIndex, category, StackedBarSeries);
+                if (Chart == null)
+                {
+                    continue;
+                }
+
                 var x0 = GetBarLeft(data, barIndex, category, StackedBarSeries);
                 var startX = Math.Min(dataX, x0);
                 var endX = Math.Max(dataX, x0);
 
                 if (startX <= x && x <= endX && startY <= y && y <= endY)
                 {
-                    return (data, new Point() { X = x, Y = y });
+                    return (data!, new Point() { X = x, Y = y });
                 }
             }
 
-            return (null, null);
+            return (default!, new Point());
         }
 
         /// <inheritdoc />
@@ -289,21 +398,49 @@ namespace Radzen.Blazor
         /// <inheritdoc />
         public override IEnumerable<ChartDataLabel> GetDataLabels(double offsetX, double offsetY)
         {
+            return GetDataLabels(offsetX, offsetY, DataLabelPosition.Auto);
+        }
+
+        /// <inheritdoc />
+        public override IEnumerable<ChartDataLabel> GetDataLabels(double offsetX, double offsetY, DataLabelPosition position)
+        {
+            if (Chart == null)
+            {
+                return Enumerable.Empty<ChartDataLabel>();
+            }
+
             var category = ComposeCategory(Chart.ValueScale);
             var list = new List<ChartDataLabel>();
             var barIndex = BarIndex;
             var stackedBarSeries = StackedBarSeries;
+            const double gap = 16;
+            const double inset = 8;
 
             foreach (var data in Items)
             {
                 var left = GetBarLeft(data, barIndex, category, stackedBarSeries);
                 var right = GetBarRight(data, barIndex, category, stackedBarSeries);
-                var x = left + (right - left) / 2;
+                var value = Value(data);
+                var end = value < 0 ? left : right;
+                var center = left + (right - left) / 2;
+                var anchorY = TooltipY(data);
+                var sign = Math.Sign(end - center);
+
+                var (x, y, textAnchor) = position switch
+                {
+                    DataLabelPosition.Top => (center, anchorY - gap, "middle"),
+                    DataLabelPosition.Bottom => (center, anchorY + gap, "middle"),
+                    DataLabelPosition.Inside => (end - inset * sign, anchorY, sign < 0 ? "start" : sign > 0 ? "end" : "middle"),
+                    _ => (center, anchorY, "middle"),
+                };
+
                 list.Add(new ChartDataLabel
                 {
-                    Position = new Point() { X = x + offsetX, Y = TooltipY(data) + offsetY },
-                    TextAnchor = "middle",
-                    Text = Chart.ValueAxis.Format(Chart.CategoryScale, Value(data))
+                    Position = new Point() { X = x + offsetX, Y = y + offsetY },
+                    Anchor = new Point() { X = center, Y = anchorY },
+                    Value = value,
+                    TextAnchor = textAnchor,
+                    Text = Chart.ValueAxis.Format(Chart.CategoryScale, value)
                 });
             }
 

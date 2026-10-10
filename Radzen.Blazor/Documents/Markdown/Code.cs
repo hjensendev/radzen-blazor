@@ -1,0 +1,24 @@
+using System;
+
+namespace Radzen.Documents.Markdown;
+
+/// <summary>
+/// Represents a markdown inline code block: <c>`code`</c>.
+/// </summary>
+/// <param name="value"></param>
+public class Code(string value) : Inline
+{
+    /// <summary>
+    /// Gets or sets the code value.
+    /// </summary>
+    public string Value { get; set; } = value;
+
+    internal int? Ticks { get; set; }
+
+    /// <inheritdoc />
+    public override void Accept(INodeVisitor visitor)
+    {
+        ArgumentNullException.ThrowIfNull(visitor);
+        visitor.VisitCode(this);
+    }
+}

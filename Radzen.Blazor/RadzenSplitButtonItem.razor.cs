@@ -1,6 +1,8 @@
-﻿using Microsoft.AspNetCore.Components;
+using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.Web;
 using Radzen.Blazor.Rendering;
+using System;
+using System.Threading.Tasks;
 
 namespace Radzen.Blazor
 {
@@ -21,21 +23,21 @@ namespace Radzen.Blazor
         /// </summary>
         /// <value>The icon.</value>
         [Parameter]
-        public string Icon { get; set; }
+        public string? Icon { get; set; }
 
         /// <summary>
         /// Gets or sets the icon color.
         /// </summary>
         /// <value>The icon color.</value>
         [Parameter]
-        public string IconColor { get; set; }
+        public string? IconColor { get; set; }
 
         /// <summary>
         /// Gets or sets the value.
         /// </summary>
         /// <value>The value.</value>
         [Parameter]
-        public string Value { get; set; }
+        public string? Value { get; set; }
 
         /// <summary>
         /// Gets or sets a value indicating whether this <see cref="RadzenSplitButtonItem"/> is disabled.
@@ -44,13 +46,13 @@ namespace Radzen.Blazor
         [Parameter]
         public bool Disabled { get; set; }
 
-        RadzenSplitButton _splitButton;
+        RadzenSplitButton? _splitButton;
         /// <summary>
         /// Gets or sets the split button.
         /// </summary>
         /// <value>The split button.</value>
         [CascadingParameter]
-        public RadzenSplitButton SplitButton 
+        public RadzenSplitButton? SplitButton 
         {
             get
             {
@@ -61,14 +63,14 @@ namespace Radzen.Blazor
                 if (_splitButton != value)
                 {
                     _splitButton = value;
-                    _splitButton.AddItem(this);
+                    _splitButton?.AddItem(this);
                 }
             }
         }
 
 
         /// <summary>
-        /// Handles the <see cref="E:Click" /> event.
+        /// Handles the Click event.
         /// </summary>
         /// <param name="args">The <see cref="MouseEventArgs"/> instance containing the event data.</param>
         public async System.Threading.Tasks.Task OnClick(MouseEventArgs args)
@@ -80,7 +82,10 @@ namespace Radzen.Blazor
             }
         }
 
-        ClassList ItemClassList => ClassList.Create("rz-menuitem").AddDisabled(Disabled).Add("rz-state-focused", SplitButton.IsFocused(this));
+        string ItemClass => ClassList.Create("rz-menuitem")
+                                     .AddDisabled(Disabled)
+                                     .Add("rz-state-highlight", SplitButton?.IsFocused(this) == true)
+                                     .ToString();
 
         /// <inheritdoc />
         public override void Dispose()
@@ -91,6 +96,8 @@ namespace Radzen.Blazor
             {
                 SplitButton.RemoveItem(this);
             }
+
+            GC.SuppressFinalize(this);
         }
     }
 }

@@ -1,34 +1,60 @@
 @using Microsoft.JSInterop
 @using System.Reflection;
+@using System.ComponentModel
 @inject IJSRuntime JSRuntime
 @implements IDisposable
-<div class="@WrapperCssClass">
-    <div @ref="dialog" class="@CssClass" role="dialog" aria-labelledby="rz-dialog-0-label" style=@Style>
-        @if (Dialog.Options.ShowTitle)
+<div class=@WrapperClass>
+    @{
+        var options = Dialog?.Options;
+        var dialogId = $"rz-dialog-{Dialog?.GetHashCode()}";
+        var titleId = $"{dialogId}-label";
+        var showTitle = options?.ShowTitle == true;
+        var ariaAttributes = new Dictionary<string, object?>();
+        if (showTitle)
+        {
+            ariaAttributes["aria-labelledby"] = titleId;
+        }
+        else
+        {
+            ariaAttributes["aria-label"] = options?.AriaLabel ?? Dialog?.Title;
+        }
+        if (ShowMask)
+        {
+            ariaAttributes["aria-modal"] = "true";
+        }
+    }
+    <div @ref="dialog" class=@Class role="@(options?.Role ?? "dialog")" style=@Style @attributes="ariaAttributes">
+        @if (showTitle)
         {
             <div class="rz-dialog-titlebar">
-                <div class="rz-dialog-title" id="rz-dialog-0-label">
-                    @if (Dialog.Options.TitleContent != null)
+                <div class="rz-dialog-title" id="@titleId">
+                    @if (!string.IsNullOrEmpty(options?.Icon))
                     {
-                        @Dialog.Options.TitleContent(Service)
+                        <RadzenIcon Icon="@options.Icon" 
+                                    IconColor="@(string.IsNullOrEmpty(options.IconColor) ? null : options.IconColor)" 
+                                    Style="@options.IconStyle" />
+                    }
+                    @if (options?.TitleContent != null && Service != null)
+                    {
+                        @options.TitleContent(Service)
                     }
                     else
                     {
-                        @((MarkupString)Dialog.Title)
+                        @Dialog?.Title
                     }
                 </div>
-                @if (Dialog.Options.ShowClose)
+                @if (options?.ShowClose == true)
                 {
-                    <a @onclick:preventDefault="true" @onclick=@Close @onkeydown="@OnKeyPress" role="button" class="rz-dialog-titlebar-icon rz-dialog-titlebar-close" tabindex=@Dialog.Options.CloseTabIndex>
+                    <button type="button" @onclick=@Close @onkeydown="@OnKeyPress" class="rz-dialog-titlebar-icon rz-dialog-titlebar-close" tabindex="@(options?.CloseTabIndex ?? 0)" aria-label="@(options?.CloseAriaLabel ?? CloseAriaLabel)">
                         <span class="notranslate rzi rzi-times"></span>
-                    </a>
+                    </button>
                 }
             </div>
         }
-        <div class="@ContentCssClass">
-            @if (Dialog.Options.ChildContent != null)
+        <div class=@ContentClass>
+            @if (options?.ChildContent != null && Service != null)
             {
-                @Dialog.Options.ChildContent(Service)
+                @options.ChildContent(Service)
             }
             else
             {
@@ -39,35 +65,34 @@
 
     @if (ShowMask)
     {
-        @if (Dialog.Options.CloseDialogOnOverlayClick)
+        @if (Dialog?.Options?.CloseDialogOnOverlayClick == true)
         {
-            <div @onclick="@Close" class="rz-dialog-mask"></div>
+            <div @onclick="@Close" class="rz-dialog-mask" aria-hidden="true" tabindex="-1"></div>
         }
         else
         {
-            <div class="rz-dialog-mask" style="pointer-events: none;"></div>
+            <div class="rz-dialog-mask" style="pointer-events: none;" aria-hidden="true" tabindex="-1"></div>
         }
     }
-
 </div>
 
 @code {
-    void OnKeyPress(KeyboardEventArgs args)
+    async Task OnKeyPress(KeyboardEventArgs args)
     {
         var key = args.Code != null ? args.Code : args.Key;
 
         if (key == "Space" || key == "Enter")
         {
-            Close();
+            await Close();
         }
     }
 
     ElementReference dialog;
 
-    string left;
-    string top;
-    string height;
-    string width;
+    string? left;
+    string? top;
+    string? height;
+    string? width;
 
     /// <summary>
     /// Called when dragged.
@@ -79,7 +104,7 @@
     {
         shouldRender = false;
 
-        if (Dialog.Options.Drag != null)
+        if (Dialog?.Options?.Drag != null)
         {
             Dialog.Options.Drag(new System.Drawing.Point(Convert.ToInt32(l), Convert.ToInt32(t)));
         }
@@ -101,13 +126,13 @@
     {
         shouldRender = false;
 
-        if(Dialog.Options.Resize != null && w != 0 && h != 0)
+        if (w != 0 && h != 0)
         {
-            Dialog.Options.Resize(new System.Drawing.Size(Convert.ToInt32(w), Convert.ToInt32(h)));
-        }
+            Dialog?.Options?.Resize?.Invoke(new System.Drawing.Size(Convert.ToInt32(w), Convert.ToInt32(h)));
 
-        width = $"width: {w}px;";
-        height = $"height: {h}px;";
+            width = $"width: {w}px;";
+            height = $"height: {h}px;";
+        }
 
         shouldRender = true;
     }
@@ -119,84 +144,108 @@
     }
 
     [Parameter]
-    public Dialog Dialog { get; set; }
+    public Dialog? Dialog { get; set; }
 
     [Parameter]
     public bool ShowMask { get; set; } = true;
 
-    RenderFragment ChildContent => new RenderFragment(builder =>
-        {
-            builder.OpenComponent(0, Dialog.Type);
+    private RenderFragment? childContent;
 
-            if (Dialog.Parameters != null)
+    RenderFragment ChildContent => childContent ??= new RenderFragment(builder =>
+    {
+        // Wrap the Dialog component in a CascadingValue
+
+        builder.OpenComponent<CascadingValue<Dialog>>(0); // Open CascadingValue
+        builder.AddAttribute(1, "Value", Dialog);
+        builder.AddAttribute(2, "IsFixed", true);
+        builder.AddAttribute(3, "ChildContent", (RenderFragment)((builder2) =>
+        {
+            if (Dialog != null && Dialog.Type != null)
             {
-                foreach (var parameter in Dialog.Parameters)
+                builder2.OpenComponent(0, Dialog.Type); // Open Dialog
+
+                if (Dialog.Parameters != null)
                 {
-                    builder.AddAttribute(1, parameter.Key, parameter.Value);
+                    foreach (var parameter in Dialog.Parameters)
+                    {
+                        builder2.AddAttribute(1, parameter.Key, parameter.Value);
+                    }
                 }
+
+                builder2.AddComponentReferenceCapture(2, component => reference = component); // Capture reference
+                builder2.CloseComponent(); // Close Dialog
             }
+        }));
+        builder.CloseComponent(); // Close CascadingValue
+    });
 
-            builder.AddComponentReferenceCapture(2, component => reference = component);
+    object? reference;
 
-            builder.CloseComponent();
-        });
-
-    object reference;
-
-    void Close()
+    async Task Close()
     {
-        Service.Close();
-    }
-
-    string CssClass
-    {
-        get
+        if (Service != null)
         {
-            var baseCss = "rz-dialog";
-            return string.IsNullOrEmpty(Dialog.Options.CssClass) ? baseCss : $"{baseCss} {Dialog.Options.CssClass}";
+            await Service.TryCloseAsync();
         }
     }
 
-    string WrapperCssClass
-    {
-        get
-        {
-            var baseCss = "rz-dialog-wrapper";
-            return string.IsNullOrWhiteSpace(Dialog.Options.WrapperCssClass) ? baseCss : $"{baseCss} {Dialog.Options.WrapperCssClass}";
-        }
-    }
+    string Class => ClassList.Create("rz-dialog rz-open")
+                             .Add(Dialog?.Options?.CssClass)
+                             .ToString();
 
-    string ContentCssClass
-    {
-        get
-        {
-            var baseCss = "rz-dialog-content";
-            return string.IsNullOrEmpty(Dialog.Options.ContentCssClass) ? baseCss : $"{baseCss} {Dialog.Options.ContentCssClass}";
-        }
-    }
+    string WrapperClass => ClassList.Create("rz-dialog-wrapper")
+                                    .Add(Dialog?.Options?.WrapperCssClass)
+                                    .ToString();
+
+    string ContentClass => ClassList.Create("rz-dialog-content")
+                                    .Add(Dialog?.Options?.ContentCssClass)
+                                    .ToString();
 
     string Style
     {
         get
         {
             var baseStyle = "";
-            var widthStyle = !string.IsNullOrEmpty(width) ? width : string.IsNullOrEmpty(Dialog.Options.Width) ? "" : $"width: {Dialog.Options.Width};";
-            var heightStyle = !string.IsNullOrEmpty(height) ? height : string.IsNullOrEmpty(Dialog.Options.Height) ? "" : $"height: {Dialog.Options.Height};";
-            var topStyle = !string.IsNullOrEmpty(top) ? top : string.IsNullOrEmpty(Dialog.Options.Top) ? "" : $"top: {Dialog.Options.Top};";
-            var leftStyle = !string.IsNullOrEmpty(left) ? left :string.IsNullOrEmpty(Dialog.Options.Left) ? "" : $"left: {Dialog.Options.Left};";
-            var bottomStyle = string.IsNullOrEmpty(Dialog.Options.Bottom) ? "" : $"bottom: {Dialog.Options.Bottom};";
-            var resizeStyle = Dialog.Options.Resizable ? "resize:both;" : "";
+            var widthStyle = !string.IsNullOrEmpty(width) ? width : string.IsNullOrEmpty(Dialog?.Options?.Width) ? "" : $"width: {Dialog?.Options?.Width};";
+            var heightStyle = !string.IsNullOrEmpty(height) ? height : string.IsNullOrEmpty(Dialog?.Options?.Height) ? "" : $"height: {Dialog?.Options?.Height};";
+            var topStyle = !string.IsNullOrEmpty(top) ? top : string.IsNullOrEmpty(Dialog?.Options?.Top) ? "" : $"top: {Dialog?.Options?.Top};";
+            var leftStyle = !string.IsNullOrEmpty(left) ? left :string.IsNullOrEmpty(Dialog?.Options?.Left) ? "" : $"left: {Dialog?.Options?.Left};";
+            var bottomStyle = string.IsNullOrEmpty(Dialog?.Options?.Bottom) ? "" : $"bottom: {Dialog.Options.Bottom};";
+            var resizeStyle = Dialog?.Options?.Resizable == true ? "resize:both;" : "";
 
-            return $"{baseStyle}{widthStyle}{heightStyle}{topStyle}{leftStyle}{bottomStyle}{resizeStyle}{Dialog.Options.Style}";
+            return $"{baseStyle}{widthStyle}{heightStyle}{topStyle}{leftStyle}{bottomStyle}{resizeStyle}{Dialog?.Options?.Style ?? ""}";
         }
     }
 
     [Inject] 
-    DialogService Service { get; set; }
+    DialogService? Service { get; set; }
 
     protected override void OnInitialized()
     {
-        Service.OnRefresh += OnRefresh;
+        if (Service != null)
+        {
+            Service.OnRefresh += OnRefresh;
+        }
+
+		// Subscribe to PropertyChanged event to auto refresh the dialog when properties change
+        if (Dialog != null)
+        {
+            Dialog.PropertyChanged += OnPropertyChanged;
+        }
+
+		// Subscribe to PropertyChanged event to auto refresh the dialog when properties change
+		if (Dialog?.Options != null)
+			Dialog.Options.PropertyChanged += OnPropertyChanged;
+    }
+
+    /// <summary>
+    /// Handles the property changed event and triggers a refresh.
+    /// </summary>
+    /// <param name="sender">The source of the event.</param>
+    /// <param name="e">The <see cref="PropertyChangedEventArgs"/> instance containing the event data.</param>
+    void OnPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        OnRefresh();
     }
 
     void OnRefresh()
@@ -213,16 +262,36 @@
 
     public void Dispose()
     {
-        Service.OnRefresh -= OnRefresh;
+        if (Service != null)
+        {
+            Service.OnRefresh -= OnRefresh;
+        }
+
+		// Unsubscribe from PropertyChanged event
+        if (Dialog != null)
+        {
+            Dialog.PropertyChanged -= OnPropertyChanged;
+        }
+
+		// Unsubscribe from PropertyChanged event
+        if (Dialog?.Options != null)
+            Dialog.Options.PropertyChanged -= OnPropertyChanged;
+
+        dotNetReference?.Dispose();
+        dotNetReference = null;
     }
 
+    [System.Diagnostics.CodeAnalysis.DynamicDependency(System.Diagnostics.CodeAnalysis.DynamicallyAccessedMemberTypes.All, typeof(DialogOptionsBase))]
+    [System.Diagnostics.CodeAnalysis.DynamicDependency(System.Diagnostics.CodeAnalysis.DynamicallyAccessedMemberTypes.All, typeof(DialogOptions))]
+    [System.Diagnostics.CodeAnalysis.DynamicDependency(System.Diagnostics.CodeAnalysis.DynamicallyAccessedMemberTypes.All, typeof(AlertOptions))]
+    [System.Diagnostics.CodeAnalysis.DynamicDependency(System.Diagnostics.CodeAnalysis.DynamicallyAccessedMemberTypes.All, typeof(ConfirmOptions))]
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
         await base.OnAfterRenderAsync(firstRender);
 
         if (firstRender)
         {
-            var options = Dialog.Options;
+            var options = Dialog?.Options;
 
             var dialogOptions = new DialogOptions()
                 {
@@ -243,11 +312,14 @@
                     CloseTabIndex = options != null ? options.CloseTabIndex : 0,
                 };
 
-            await JSRuntime.InvokeAsync<string>("Radzen.openDialog", dialogOptions, Service.Reference, DotNetReference);
+            if (Service?.Reference != null)
+            {
+                await JSRuntime.InvokeAsync<string>("Radzen.openDialog", dialogOptions, Service.Reference, DotNetReference);
+            }
         }
     }
 
-    private DotNetObjectReference<DialogContainer> dotNetReference;
+    private DotNetObjectReference<DialogContainer>? dotNetReference;
 
     /// <summary>
     /// Gets the reference for the current component.

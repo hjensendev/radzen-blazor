@@ -8,6 +8,25 @@ using Microsoft.JSInterop;
 namespace Radzen
 {
     /// <summary>
+    /// Specifies the SameSite attribute for the cookie.
+    /// </summary>
+    public enum CookieSameSiteMode
+    {
+        /// <summary>
+        /// No SameSite attribute.
+        /// </summary>
+        None,
+        /// <summary>
+        /// Lax SameSite attribute.
+        /// </summary>
+        Lax,
+        /// <summary>
+        /// Strict SameSite attribute.
+        /// </summary>
+        Strict
+    }
+
+    /// <summary>
     /// Options for the <see cref="CookieThemeService" />.
     /// </summary>
     public class CookieThemeServiceOptions
@@ -21,12 +40,22 @@ namespace Radzen
         /// Gets or sets the cookie duration.
         /// </summary>
         public TimeSpan Duration { get; set; } = TimeSpan.FromDays(365);
+
+        /// <summary>
+        /// Gets or sets a value indicating whether to use secure cookies.
+        /// </summary>
+        public bool IsSecure { get; set; }
+
+        /// <summary>
+        /// Gets or sets the SameSite attribute for the cookie.
+        /// </summary>
+        public CookieSameSiteMode? SameSite { get; set; }
     }
 
     /// <summary>
     /// Persist the current theme in a cookie. Requires <see cref="ThemeService" /> to be registered in the DI container.
     /// </summary>
-    public class CookieThemeService
+    public class CookieThemeService : IDisposable
     {
         private readonly CookieThemeServiceOptions options;
         private readonly IJSRuntime jsRuntime;
@@ -35,13 +64,16 @@ namespace Radzen
         /// <summary>
         /// Initializes a new instance of the <see cref="CookieThemeService" /> class.
         /// </summary>
-        public CookieThemeService(IJSRuntime jsRuntime, ThemeService themeService, IOptions<CookieThemeServiceOptions> options)
+        public CookieThemeService(IJSRuntime jsRuntime, ThemeService themeService, IOptions<CookieThemeServiceOptions>? options)
         {
             this.jsRuntime = jsRuntime;
             this.themeService = themeService;
-            this.options = options.Value;
+            this.options = options?.Value ?? new CookieThemeServiceOptions();
 
-            themeService.ThemeChanged += OnThemeChanged;
+            if (themeService != null)
+            {
+                themeService.ThemeChanged += OnThemeChanged;
+            }
 
             _ = InitializeAsync();
         }
@@ -50,7 +82,7 @@ namespace Radzen
         {
             try
             {
-                var cookies = await jsRuntime.InvokeAsync<string>("eval", "document.cookie");
+                var cookies = await jsRuntime.InvokeAsync<string>("Radzen.getCookies");
 
                 var themeCookie = cookies?.Split("; ").Select(x =>
                 {
@@ -75,8 +107,26 @@ namespace Radzen
         private void OnThemeChanged()
         {
             var expiration = DateTime.Now.Add(options.Duration);
+            var cookie = $"{options.Name}={themeService.Theme}; expires={expiration:R}; path=/";
 
-            _ = jsRuntime.InvokeVoidAsync("eval", $"document.cookie = \"{options.Name}={themeService.Theme}; expires={expiration:R}; path=/\"");
+            if (options.SameSite.HasValue)
+            {
+                cookie += $"; SameSite={options.SameSite}";
+            }
+
+            if (options.IsSecure)
+            {
+                cookie += "; Secure";
+            }
+
+            jsRuntime.InvokeVoid("Radzen.setCookie", cookie);
+        }
+
+        /// <inheritdoc />
+        public void Dispose()
+        {
+            themeService.ThemeChanged -= OnThemeChanged;
+            GC.SuppressFinalize(this);
         }
     }
 

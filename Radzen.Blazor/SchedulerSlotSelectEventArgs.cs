@@ -20,11 +20,21 @@ namespace Radzen
         /// <summary>
         /// List of appointments.
         /// </summary>
-        public IEnumerable<AppointmentData> Appointments { get; set; }
+        public IEnumerable<AppointmentData>? Appointments { get; set; }
         /// <summary>
         /// Current View.
         /// </summary>
-        public ISchedulerView View { get; set; }
+        public ISchedulerView? View { get; set; }
+        /// <summary>
+        /// The innermost resource item associated with the slot. Set when the slot belongs to a resource in a view which groups appointments by resource
+        /// via <see cref="SchedulerViewBase.GroupByResource" />; otherwise <c>null</c>.
+        /// </summary>
+        public object? Resource { get; set; }
+        /// <summary>
+        /// The resource items associated with the slot keyed by resource type <see cref="RadzenSchedulerResource.Name" /> - one entry per grouping level.
+        /// Set when the slot belongs to a resource in a view which groups appointments by resource; otherwise <c>null</c>.
+        /// </summary>
+        public IDictionary<string, object>? Resources { get; set; }
         /// <summary>
         /// Has default action been prevented from occuring?
         /// </summary>

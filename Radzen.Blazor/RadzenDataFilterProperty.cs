@@ -3,6 +3,7 @@ using Microsoft.JSInterop;
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Threading.Tasks;
 
@@ -13,29 +14,31 @@ namespace Radzen.Blazor
     /// Must be placed inside a <see cref="RadzenDataFilter{TItem}" />
     /// </summary>
     /// <typeparam name="TItem">The type of the DataFilter item.</typeparam>
-    public partial class RadzenDataFilterProperty<TItem> : ComponentBase, IDisposable
+    [UnconditionalSuppressMessage(TrimMessages.Trimming, TrimMessages.IL2026, Justification = TrimMessages.DataTypePreserved)]
+    [UnconditionalSuppressMessage(TrimMessages.Trimming, TrimMessages.IL2087, Justification = TrimMessages.DataTypePreserved)]
+    public partial class RadzenDataFilterProperty<
+        [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.PublicFields)] TItem> : ComponentBase, IDisposable
     {
-        internal event Action<object> FilterValueChange;
+        internal event Action<object>? FilterValueChange;
 
         /// <summary>
         /// Gets or sets the DataFilter.
         /// </summary>
         /// <value>The DataFilter.</value>
         [CascadingParameter]
-        public RadzenDataFilter<TItem> DataFilter { get; set; }
+        public RadzenDataFilter<TItem>? DataFilter { get; set; }
 
         /// <summary>
         /// Gets or sets the format string.
         /// </summary>
         /// <value>The format string.</value>
         [Parameter]
-        public string FormatString { get; set; }
+        public string? FormatString { get; set; }
 
         internal void RemoveColumn(RadzenDataFilterProperty<TItem> property)
         {
-            if (DataFilter.properties.Contains(property))
+            if (DataFilter != null && DataFilter.properties.Remove(property))
             {
-                DataFilter.properties.Remove(property);
                 if (!DataFilter.disposed)
                 {
                     try { InvokeAsync(StateHasChanged); } catch { }
@@ -68,7 +71,7 @@ namespace Radzen.Blazor
                 }
                 else
                 {
-                    propertyValueGetter = PropertyAccess.Getter<TItem, object>(Property);
+                    propertyValueGetter = PropertyAccess.Getter<TItem, object>(Property!);
                 }
 
                 if (_filterPropertyType == typeof(string))
@@ -106,21 +109,21 @@ namespace Radzen.Blazor
         /// </summary>
         /// <value>The title.</value>
         [Parameter]
-        public string Title { get; set; }
+        public string? Title { get; set; }
 
         /// <summary>
         /// Gets or sets the property name.
         /// </summary>
         /// <value>The property name.</value>
         [Parameter]
-        public string Property { get; set; }
+        public string? Property { get; set; }
 
         /// <summary>
         /// Gets or sets the filter property name.
         /// </summary>
         /// <value>The filter property name.</value>
         [Parameter]
-        public string FilterProperty { get; set; }
+        public string? FilterProperty { get; set; }
 
         /// <summary>
         /// Gets or sets a value indicating whether this property is selected in the filter.
@@ -134,25 +137,25 @@ namespace Radzen.Blazor
         /// </summary>
         /// <value>The filter value.</value>
         [Parameter]
-        public object FilterValue { get; set; }
+        public object? FilterValue { get; set; }
 
         /// <summary>
         /// Gets or sets the filter template.
         /// </summary>
         /// <value>The filter template.</value>
         [Parameter]
-        public RenderFragment<CompositeFilterDescriptor> FilterTemplate { get; set; }
+        public RenderFragment<CompositeFilterDescriptor>? FilterTemplate { get; set; }
 
         /// <summary>
         /// Gets or sets the data type.
         /// </summary>
         /// <value>The data type.</value>
         [Parameter]
-        public Type Type { get; set; }
+        public Type? Type { get; set; }
 
-        Func<TItem, object> propertyValueGetter;
+        Func<TItem, object>? propertyValueGetter;
 
-        internal object GetHeader()
+        internal object? GetHeader()
         {
             if (!string.IsNullOrEmpty(Title))
             {
@@ -168,17 +171,17 @@ namespace Radzen.Blazor
         /// Gets the filter property.
         /// </summary>
         /// <returns>System.String.</returns>
-        public string GetFilterProperty()
+        public string? GetFilterProperty()
         {
             return Property;
         }
 
-        Type _filterPropertyType;
+        Type? _filterPropertyType;
 
         /// <summary>
         /// Gets the filter property type.
         /// </summary>
-        public Type FilterPropertyType
+        public Type? FilterPropertyType
         {
             get
             {
@@ -186,7 +189,7 @@ namespace Radzen.Blazor
             }
         }
 
-        object filterValue;
+        object? filterValue;
         FilterOperator? filterOperator;
 
         /// <summary>
@@ -206,12 +209,15 @@ namespace Radzen.Blazor
 
                     if (FilterTemplate != null)
                     {
-                        if (FilterValueChange != null)
+                        if (FilterValueChange != null && filterValue != null)
                         {
                             FilterValueChange(filterValue);
                         }
 
-                        await DataFilter.Filter();
+                        if (DataFilter != null)
+                        {
+                            await DataFilter.Filter();
+                        }
 
                         return;
                     }
@@ -224,7 +230,7 @@ namespace Radzen.Blazor
         /// <summary>
         /// Get property filter value.
         /// </summary>
-        public object GetFilterValue()
+        public object? GetFilterValue()
         {
             return filterValue ?? FilterValue;
         }
@@ -240,11 +246,11 @@ namespace Radzen.Blazor
         /// <summary>
         /// Set property filter value.
         /// </summary>
-        public void SetFilterValue(object value)
+        public void SetFilterValue(object? value)
         {
             if ((FilterPropertyType == typeof(DateTimeOffset) || FilterPropertyType == typeof(DateTimeOffset?)) && value != null && value is DateTime?)
             {
-                DateTimeOffset? offset = DateTime.SpecifyKind((DateTime)value, DateTimeKind.Utc);
+                DateTimeOffset? offset = DateTime.SpecifyKind((DateTime)value, ((DateTime?)value).Value.Kind);
                 value = offset;
             }
 
@@ -279,6 +285,24 @@ namespace Radzen.Blazor
         [Parameter]
         public FilterOperator FilterOperator { get; set; }
 
+        IEnumerable<FilterOperator>? _filterOperators;
+        /// <summary>
+        /// Gets or sets the filter operators.
+        /// </summary>
+        /// <value>The filter operators.</value>
+        [Parameter]
+        public IEnumerable<FilterOperator>? FilterOperators
+        {
+            get
+            {
+                return _filterOperators;
+            }
+            set
+            {
+                _filterOperators = value;
+            }
+        }
+
         /// <summary>
         /// Set property filter operator.
         /// </summary>
@@ -297,11 +321,20 @@ namespace Radzen.Blazor
         /// </summary>
         public virtual IEnumerable<FilterOperator> GetFilterOperators()
         {
+            if (FilterOperators != null)
+            {
+                return FilterOperators;
+            }
+
             if (PropertyAccess.IsEnum(FilterPropertyType))
+            {
                 return new FilterOperator[] { FilterOperator.Equals, FilterOperator.NotEquals };
+            }
 
             if (PropertyAccess.IsNullableEnum(FilterPropertyType))
+            {
                 return new FilterOperator[] { FilterOperator.Equals, FilterOperator.NotEquals, FilterOperator.IsNull, FilterOperator.IsNotNull };
+            }
 
             if ((typeof(IEnumerable).IsAssignableFrom(FilterPropertyType) || typeof(IEnumerable<>).IsAssignableFrom(FilterPropertyType))
                 && FilterPropertyType != typeof(string))
@@ -330,7 +363,7 @@ namespace Radzen.Blazor
                 return operators;
             }
 
-            return Enum.GetValues(typeof(FilterOperator)).Cast<FilterOperator>().Where(o => o != FilterOperator.In && o != FilterOperator.NotIn).Where(o => {
+            return Enum.GetValues<FilterOperator>().Where(o => o != FilterOperator.In && o != FilterOperator.NotIn).Where(o => {
                 var isStringOperator = o == FilterOperator.Contains || o == FilterOperator.DoesNotContain
                     || o == FilterOperator.StartsWith || o == FilterOperator.EndsWith || o == FilterOperator.IsEmpty || o == FilterOperator.IsNotEmpty;
                 return FilterPropertyType == typeof(string) ? isStringOperator
@@ -340,7 +373,7 @@ namespace Radzen.Blazor
             });
         }
 
-        internal string GetFilterOperatorText(FilterOperator filterOperator)
+        internal string? GetFilterOperatorText(FilterOperator filterOperator)
         {
             switch (filterOperator)
             {
@@ -385,7 +418,7 @@ namespace Radzen.Blazor
 
         internal string GetFilterOperatorSymbol(FilterOperator filterOperator)
         {
-            var symbol = DataFilter.FilterCaseSensitivity == FilterCaseSensitivity.CaseInsensitive ? "a" : "A";
+            var symbol = DataFilter?.FilterCaseSensitivity == FilterCaseSensitivity.CaseInsensitive ? "a" : "A";
             switch (filterOperator)
             {
                 case FilterOperator.Contains:
@@ -427,6 +460,7 @@ namespace Radzen.Blazor
         public void Dispose()
         {
             DataFilter?.RemoveProperty(this);
+            GC.SuppressFinalize(this);
         }
     }
 }

@@ -1,6 +1,6 @@
 @inherits Radzen.RadzenComponent
 
-<div @ref="editor" style="height: 500px; width: 100%;" dir="ltr"></div>
+<div @ref="editor" class="code-editor" dir="ltr"></div>
 @code {
     IJSObjectReference monaco;
     ElementReference editor;
@@ -37,9 +37,12 @@
                 automaticLayout = true
             });
 
-            interopValue = Value;
+            if (monaco != null)
+            {
+                interopValue = Value;
 
-            await monaco.InvokeVoidAsync("setValue", interopValue);
+                await monaco.InvokeVoidAsync("setValue", interopValue);
+            }
         }
     }
 

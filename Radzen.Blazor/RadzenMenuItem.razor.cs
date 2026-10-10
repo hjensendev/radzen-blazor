@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
@@ -16,7 +17,7 @@ namespace Radzen.Blazor
         /// <inheritdoc />
         protected override string GetComponentCssClass()
         {
-            return $"rz-navigation-item{(Disabled ? " rz-state-disabled" : "")}{(Parent.IsFocused(this) ? " rz-state-focused" : "")}";
+            return $"rz-navigation-item{(Disabled ? " rz-state-disabled" : "")}{(Parent?.IsFocused(this) == true ? " rz-state-focused" : "")}";
         }
 
         /// <summary>
@@ -31,63 +32,65 @@ namespace Radzen.Blazor
         /// </summary>
         /// <value>The target.</value>
         [Parameter]
-        public string Target { get; set; }
+        public string? Target { get; set; }
 
         /// <summary>
         /// Gets or sets the text.
         /// </summary>
         /// <value>The text.</value>
         [Parameter]
-        public string Text { get; set; }
+        public string? Text { get; set; }
 
         /// <summary>
         /// Gets or sets the value.
         /// </summary>
         /// <value>The value.</value>
         [Parameter]
-        public object Value { get; set; }
+        public object? Value { get; set; }
 
         /// <summary>
         /// Gets or sets the path.
         /// </summary>
         /// <value>The path.</value>
         [Parameter]
-        public string Path { get; set; }
+        public string? Path { get; set; }
 
         /// <summary>
         /// Gets or sets the icon.
         /// </summary>
         /// <value>The icon.</value>
         [Parameter]
-        public string Icon { get; set; }
+        public string? Icon { get; set; }
 
         /// <summary>
         /// Gets or sets the icon color.
         /// </summary>
         /// <value>The icon color.</value>
         [Parameter]
-        public string IconColor { get; set; }
+        public string? IconColor { get; set; }
 
         /// <summary>
         /// Gets or sets the image.
         /// </summary>
         /// <value>The image.</value>
         [Parameter]
-        public string Image { get; set; }
+        public string? Image { get; set; }
 
         /// <summary>
         /// Gets or sets the image style.
         /// </summary>
         /// <value>The image style.</value>
         [Parameter]
-        public string ImageStyle { get; set; }
+        public string? ImageStyle { get; set; }
+
+        private string? imageAlternateText;
 
         /// <summary>
         /// Gets or sets the text.
         /// </summary>
         /// <value>The text.</value>
         [Parameter]
-        public string ImageAlternateText { get; set; } = "image";
+        public string ImageAlternateText { get => imageAlternateText ?? Localize(nameof(RadzenStrings.MenuItem_ImageAlternateText)); set => imageAlternateText = value; }
 
         /// <summary>
         /// Gets or sets the navigation link match.
@@ -101,14 +104,26 @@ namespace Radzen.Blazor
         /// </summary>
         /// <value>The template.</value>
         [Parameter]
-        public RenderFragment Template { get; set; }
+        public RenderFragment? Template { get; set; }
 
         /// <summary>
         /// Gets or sets the child content.
         /// </summary>
         /// <value>The child content.</value>
         [Parameter]
-        public RenderFragment ChildContent { get; set; }
+        public RenderFragment? ChildContent { get; set; }
+
+        internal string? SubmenuId => ChildContent != null ? $"{GetId()}-submenu" : null;
+
+        internal string? GetMenuItemId() => GetId();
+
+        internal bool Expanded { get; set; }
+
+        internal bool IsActive => Parent?.IsFocused(this) == true;
+
+        internal string ArrowIcon => Parent?.Flyout == true
+            ? "keyboard_arrow_right"
+            : "keyboard_arrow_down";
 
         /// <summary>
         /// Gets or sets the click callback.
@@ -117,14 +132,14 @@ namespace Radzen.Blazor
         [Parameter]
         public EventCallback<MenuItemEventArgs> Click { get; set; }
 
-        RadzenMenuItem _parentItem;
+        RadzenMenuItem? _parentItem;
 
         /// <summary>
         /// Gets or sets the parent item.
         /// </summary>
         /// <value>The parent item.</value>
         [CascadingParameter]
-        public RadzenMenuItem ParentItem
+        public RadzenMenuItem? ParentItem
         {
             get
             {
@@ -135,18 +150,18 @@ namespace Radzen.Blazor
                 if (_parentItem != value)
                 {
                     _parentItem = value;
-                    _parentItem.AddItem(this);
+                    _parentItem?.AddItem(this);
                 }
             }
         }
 
-        RadzenMenu _parent;
+        RadzenMenu? _parent;
         /// <summary>
         /// Gets or sets the parent.
         /// </summary>
         /// <value>The parent.</value>
         [CascadingParameter]
-        public RadzenMenu Parent
+        public RadzenMenu? Parent
         {
             get
             {
@@ -160,18 +175,19 @@ namespace Radzen.Blazor
 
                     if (ParentItem == null)
                     {
-                        _parent.AddItem(this);
+                        _parent?.AddItem(this);
                     }
                 }
             }
         }
 
         /// <summary>
-        /// Handles the <see cref="E:Click" /> event.
+        /// Handles the click event.
         /// </summary>
         /// <param name="args">The <see cref="MouseEventArgs"/> instance containing the event data.</param>
         public async Task OnClick(MouseEventArgs args)
         {
+            ArgumentNullException.ThrowIfNull(args);
             if (Parent != null && !Disabled)
             {
                 var eventArgs = new MenuItemEventArgs
@@ -205,15 +221,13 @@ namespace Radzen.Blazor
         {
             var events = new Dictionary<string, object>();
 
-            if (!Disabled)
+            if (!Disabled && Parent != null)
             {
                 if (Parent.ClickToOpen || ChildContent != null)
                 {
-                    events.Add("onclick", "Radzen.toggleMenuItem(this)");
                 }
                 else
                 {
-                    events.Add("onclick", "Radzen.toggleMenuItem(this, event, false)");
                 }
             }
 
@@ -240,7 +254,12 @@ namespace Radzen.Blazor
         /// </summary>
         public async Task Toggle()
         {
-            await JSRuntime.InvokeVoidAsync("Radzen.toggleMenuItem", Element);
+            Expanded = !Expanded;
+
+            if (JSRuntime != null)
+            {
+                await JSRuntime.InvokeVoidAsync("Radzen.toggleMenuItem", Element);
+            }
         }
 
         /// <summary>
@@ -248,7 +267,12 @@ namespace Radzen.Blazor
         /// </summary>
         public async Task Close()
         {
-            await JSRuntime.InvokeVoidAsync("Radzen.toggleMenuItem", Element, "event", false);
+            Expanded = false;
+
+            if (JSRuntime != null)
+            {
+                await JSRuntime.InvokeVoidAsync("Radzen.toggleMenuItem", Element, "event", false);
+            }
         }
 
         /// <summary>
@@ -256,7 +280,12 @@ namespace Radzen.Blazor
         /// </summary>
         public async Task Open()
         {
-            await JSRuntime.InvokeVoidAsync("Radzen.toggleMenuItem", Element, "event", true);
+            Expanded = true;
+
+            if (JSRuntime != null)
+            {
+                await JSRuntime.InvokeVoidAsync("Radzen.toggleMenuItem", Element, "event", true);
+            }
         }
     }
 }

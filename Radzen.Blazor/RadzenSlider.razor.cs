@@ -1,35 +1,68 @@
-﻿using Microsoft.AspNetCore.Components;
+using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.Web;
 using Microsoft.JSInterop;
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
+using System.Globalization;
 using System.Linq;
 using System.Threading.Tasks;
 
 namespace Radzen.Blazor
 {
     /// <summary>
-    /// RadzenSlider component.
+    /// A slider component for selecting numeric values by dragging a handle along a track.
+    /// RadzenSlider supports single value selection or range selection (min/max) with horizontal or vertical orientation.
+    /// Provides an intuitive way to select numeric values within a range, especially useful when the exact value is less important than the approximate position,
+    /// you want to show the valid range visually, or the input should be constrained to specific increments.
+    /// Features single value or min/max range selection, Horizontal (default) or Vertical layout, Min/Max values defining the selectable range,
+    /// Step property controlling value granularity, colored track showing selected portion for visual feedback, Arrow key support for precise adjustment, and drag gestures on mobile devices.
+    /// For range selection, set Range=true and bind to IEnumerable&lt;TValue&gt; (e.g., IEnumerable&lt;int&gt;) for min/max values.
+    /// Common uses include price filters, volume controls, zoom levels, or any bounded numeric input.
     /// </summary>
-    /// <typeparam name="TValue">The type of the value.</typeparam>
+    /// <typeparam name="TValue">The type of the slider value. Supports numeric types (int, decimal, double) or IEnumerable for range selection.</typeparam>
     /// <example>
+    /// Basic slider:
     /// <code>
-    /// &lt;RadzenSlider @bind-Value=@value TValue="int" Min="0" Max="100" Change=@(args => Console.WriteLine($"Value: {args}")) /&gt;
+    /// &lt;RadzenSlider @bind-Value=@volume TValue="int" Min="0" Max="100" /&gt;
+    /// @code {
+    ///     int volume = 50;
+    /// }
+    /// </code>
+    /// Range slider for price filter:
+    /// <code>
+    /// &lt;RadzenSlider @bind-Value=@priceRange TValue="IEnumerable&lt;decimal&gt;" Range="true" 
+    ///               Min="0" Max="1000" Step="10" /&gt;
+    /// @code {
+    ///     IEnumerable&lt;decimal&gt; priceRange = new decimal[] { 100, 500 };
+    /// }
+    /// </code>
+    /// Vertical slider with step:
+    /// <code>
+    /// &lt;RadzenSlider @bind-Value=@value TValue="double" Min="0" Max="1" Step="0.1" 
+    ///               Orientation="Orientation.Vertical" Style="height: 200px;" /&gt;
     /// </code>
     /// </example>
+    [UnconditionalSuppressMessage(TrimMessages.Trimming, TrimMessages.IL2067, Justification = TrimMessages.NumericTypePreserved)]
+    [UnconditionalSuppressMessage(TrimMessages.Trimming, TrimMessages.IL2070, Justification = TrimMessages.NumericTypePreserved)]
+    [UnconditionalSuppressMessage(TrimMessages.Trimming, TrimMessages.IL2072, Justification = TrimMessages.NumericTypePreserved)]
+    [UnconditionalSuppressMessage(TrimMessages.Trimming, TrimMessages.IL2087, Justification = TrimMessages.NumericTypePreserved)]
+    [UnconditionalSuppressMessage(TrimMessages.Trimming, TrimMessages.IL2026, Justification = TrimMessages.NumericTypePreserved)]
     public partial class RadzenSlider<TValue> : FormComponent<TValue>
     {
         ElementReference handle;
         ElementReference minHandle;
         ElementReference maxHandle;
+        IJSObjectReference? _jsRef;
+        int _jsRefVersion;
 
-        bool visibleChanged = false;
-        bool disabledChanged = false;
-        bool maxChanged = false;
-        bool minChanged = false;
-        bool rangeChanged = false;
-        bool stepChanged = false;
+        bool visibleChanged;
+        bool disabledChanged;
+        bool maxChanged;
+        bool minChanged;
+        bool rangeChanged;
+        bool stepChanged;
         bool firstRender = true;
 
         decimal Left => ((MinValue() - Min) * 100) / (Max - Min);
@@ -88,9 +121,41 @@ namespace Radzen.Blazor
                     stepChanged = false;
                 }
 
-                if (Visible && !Disabled)
+                if (Visible && !Disabled && JSRuntime != null)
                 {
-                    await JSRuntime.InvokeVoidAsync("Radzen.createSlider", UniqueID, Reference, Element, Range, Range ? minHandle : handle, maxHandle, Min, Max, Value, Step, Orientation == Orientation.Vertical);
+                    var version = ++_jsRefVersion;
+                    var jsRef = _jsRef;
+                    _jsRef = null;
+
+                    if (jsRef != null)
+                    {
+                        try
+                        {
+                            await jsRef.InvokeVoidAsync("dispose");
+                            await jsRef.DisposeAsync();
+                        }
+                        catch (ObjectDisposedException)
+                        {
+                        }
+                        catch (JSException)
+                        {
+                        }
+                    }
+
+                    if (version == _jsRefVersion)
+                    {
+                        var created = await JSRuntime.InvokeAsync<IJSObjectReference>("Radzen.createSlider", UniqueID, Reference, Element, Range, Range ? minHandle : handle, maxHandle, Min, Max, Value, Step, Orientation == Orientation.Vertical);
+
+                        if (version == _jsRefVersion)
+                        {
+                            _jsRef = created;
+                        }
+                        else if (created != null)
+                        {
+                            await created.InvokeVoidAsync("dispose");
+                            await created.DisposeAsync();
+                        }
+                    }
 
                     StateHasChanged();
                 }
@@ -102,9 +167,20 @@ namespace Radzen.Blazor
         {
             base.Dispose();
 
-            if (IsJSRuntimeAvailable)
+            _jsRefVersion++;
+            var jsRef = _jsRef;
+            _jsRef = null;
+
+            try
             {
-                JSRuntime.InvokeVoidAsync("Radzen.destroySlider", UniqueID, Element);
+                jsRef?.InvokeVoid("dispose");
+                jsRef?.DisposeFireAndForget();
+            }
+            catch (ObjectDisposedException)
+            {
+            }
+            catch (JSException)
+            {
             }
         }
 
@@ -116,21 +192,24 @@ namespace Radzen.Blazor
         [JSInvokable("RadzenSlider.OnValueChange")]
         public async System.Threading.Tasks.Task OnValueChange(decimal value, bool isMin)
         {
-            var step = string.IsNullOrEmpty(Step) || Step == "any" ? 1 : decimal.Parse(Step.Replace(",", "."), System.Globalization.CultureInfo.InvariantCulture);
+            var step = string.IsNullOrEmpty(Step) || Step == "any" ? 1 : decimal.Parse(Step.Replace(",", ".", StringComparison.Ordinal), System.Globalization.CultureInfo.InvariantCulture);
 
             var newValue = Math.Round((value - MinValue()) / step) * step + MinValue();
 
             if (Range)
             {
-                var oldMinValue = ((IEnumerable)Value).OfType<object>().FirstOrDefault();
-                var oldMaxValue = ((IEnumerable)Value).OfType<object>().LastOrDefault();
+                var oldMinValue = Value != null ? ((IEnumerable)Value).OfType<object>().FirstOrDefault() : null;
+                var oldMaxValue = Value != null ? ((IEnumerable)Value).OfType<object>().LastOrDefault() : null;
 
                 var type = typeof(TValue).IsGenericType ? typeof(TValue).GetGenericArguments()[0] : typeof(TValue);
                 var convertedNewValue = ConvertType.ChangeType(newValue, type);
 
-                var newValueAsDecimal = (decimal)ConvertType.ChangeType(newValue, typeof(decimal));
-                var oldMaxValueAsDecimal = (decimal)ConvertType.ChangeType(oldMaxValue, typeof(decimal));
-                var oldMinValueAsDecimal = (decimal)ConvertType.ChangeType(oldMinValue, typeof(decimal));
+                var newValueChanged = ConvertType.ChangeType(newValue, typeof(decimal));
+                var newValueAsDecimal = newValueChanged != null ? (decimal)newValueChanged : 0;
+                var oldMaxValueChanged = oldMaxValue != null ? ConvertType.ChangeType(oldMaxValue, typeof(decimal)) : null;
+                var oldMaxValueAsDecimal = oldMaxValueChanged != null ? (decimal)oldMaxValueChanged : 0;
+                var oldMinValueChanged = oldMinValue != null ? ConvertType.ChangeType(oldMinValue, typeof(decimal)) : null;
+                var oldMinValueAsDecimal = oldMinValueChanged != null ? (decimal)oldMinValueChanged : 0;
 
                 var values = Enumerable.Range(0, 2).Select(i =>
                 {
@@ -170,11 +249,12 @@ namespace Radzen.Blazor
             }
             else
             {
-                var valueAsDecimal = Value == null ? 0 : (decimal)ConvertType.ChangeType(Value, typeof(decimal));
+                var valueAsDecimal = Value == null ? 0 : (decimal)(ConvertType.ChangeType(Value, typeof(decimal)) ?? 0);
 
                 if (!object.Equals(valueAsDecimal, newValue) && newValue >= Min && newValue <= Max)
                 {
-                    Value = (TValue)ConvertType.ChangeType(newValue, typeof(TValue));
+                    var changeTypeResult = ConvertType.ChangeType(newValue, typeof(TValue));
+                    Value = changeTypeResult != null ? (TValue)changeTypeResult : default!;
 
                     await ValueChanged.InvokeAsync(Value);
 
@@ -202,12 +282,38 @@ namespace Radzen.Blazor
         [Parameter]
         public Orientation Orientation { get; set; } = Orientation.Horizontal;
 
+        private string? handleLabel;
+
+        /// <summary>
+        /// Gets or sets the accessible name (aria-label) for the handle of a single-value slider.
+        /// </summary>
+        [Parameter]
+        public string HandleLabel { get => handleLabel ?? Localize(nameof(RadzenStrings.Slider_HandleLabel)); set => handleLabel = value; }
+
+        private string? minHandleLabel;
+
+        /// <summary>
+        /// Gets or sets the accessible name (aria-label) for the minimum handle of a range slider.
+        /// </summary>
+        [Parameter]
+        public string MinHandleLabel { get => minHandleLabel ?? Localize(nameof(RadzenStrings.Slider_MinHandleLabel)); set => minHandleLabel = value; }
+
+        private string? maxHandleLabel;
+
+        /// <summary>
+        /// Gets or sets the accessible name (aria-label) for the maximum handle of a range slider.
+        /// </summary>
+        [Parameter]
+        public string MaxHandleLabel { get => maxHandleLabel ?? Localize(nameof(RadzenStrings.Slider_MaxHandleLabel)); set => maxHandleLabel = value; }
+
+        string OrientationAttribute => Orientation == Orientation.Vertical ? "vertical" : "horizontal";
+
         /// <summary>
         /// Gets or sets the value.
         /// </summary>
         /// <value>The value.</value>
         [Parameter]
-        public override TValue Value
+        public override TValue? Value
         {
             get
             {
@@ -231,7 +337,8 @@ namespace Radzen.Blazor
                     }
                     else
                     {
-                        _value = (TValue)ConvertType.ChangeType(Min, typeof(TValue));
+                        var changeTypeResult = ConvertType.ChangeType(Min, typeof(TValue));
+                        _value = changeTypeResult != null ? (TValue)changeTypeResult : default!;
                     }
                 }
 
@@ -262,30 +369,40 @@ namespace Radzen.Blazor
         {
             if (Range)
             {
-                var values = Value as IEnumerable;
-                if (values != null && values.OfType<object>().Any())
+                if (Value is IEnumerable values && values.OfType<object>().Any())
                 {
                     var v = values.OfType<object>().FirstOrDefault();
-                    return (decimal)Convert.ChangeType(v != null ? v : Min, typeof(decimal));
+                    var changed = Convert.ChangeType(v ?? Min, typeof(decimal), CultureInfo.InvariantCulture);
+                    return changed != null ? (decimal)changed : Min;
                 }
             }
 
-            return HasValue ? (decimal)Convert.ChangeType(Value, typeof(decimal)) : Min;
+            if (HasValue)
+            {
+                var changed = Convert.ChangeType(Value, typeof(decimal), CultureInfo.InvariantCulture);
+                return changed != null ? (decimal)changed : Min;
+            }
+            return Min;
         }
 
         decimal MaxValue()
         {
             if (Range)
             {
-                var values = Value as IEnumerable;
-                if (values != null && values.OfType<object>().Any())
+                if (Value is IEnumerable values && values.OfType<object>().Any())
                 {
                     var v = values.OfType<object>().LastOrDefault();
-                    return (decimal)Convert.ChangeType(v != null ? v : Max, typeof(decimal));
+                    var changed = Convert.ChangeType(v ?? Max, typeof(decimal), CultureInfo.InvariantCulture);
+                    return changed != null ? (decimal)changed : Min;
                 }
             }
 
-            return HasValue ? (decimal)Convert.ChangeType(Value, typeof(decimal)) : Min;
+            if (HasValue)
+            {
+                var changed = Convert.ChangeType(Value, typeof(decimal), CultureInfo.InvariantCulture);
+                return changed != null ? (decimal)changed : Min;
+            }
+            return Min;
         }
 
         /// <summary>
@@ -316,35 +433,52 @@ namespace Radzen.Blazor
         [Parameter]
         public decimal Max { get; set; } = 100;
 
-        bool preventKeyPress = false;
+        bool preventKeyPress;
+        bool stopKeydownPropagation;
         async Task OnKeyPress(KeyboardEventArgs args, bool isMin)
         {
-            var key = args.Code != null ? args.Code : args.Key;
+            var key = args?.Code ?? args?.Key;
 
-            if (Orientation == Orientation.Horizontal ? key == "ArrowLeft" || key == "ArrowRight" : key == "ArrowUp" || key == "ArrowDown")
+            var isDecrement = key == "ArrowLeft" || key == "ArrowDown";
+            var isIncrement = key == "ArrowRight" || key == "ArrowUp";
+            var isHome = key == "Home";
+            var isEnd = key == "End";
+
+            if (isDecrement || isIncrement || isHome || isEnd)
             {
+                stopKeydownPropagation = true;
                 preventKeyPress = true;
 
-                var step = string.IsNullOrEmpty(Step) || Step == "any" ? 1 : decimal.Parse(Step.Replace(",", "."), System.Globalization.CultureInfo.InvariantCulture);
+                var step = string.IsNullOrEmpty(Step) || Step == "any" ? 1 : decimal.Parse(Step.Replace(",", ".", StringComparison.Ordinal), System.Globalization.CultureInfo.InvariantCulture);
 
-                if (Range)
+                if (isHome)
                 {
-                    var oldMinValue = ((IEnumerable)Value).OfType<object>().FirstOrDefault();
-                    var oldMaxValue = ((IEnumerable)Value).OfType<object>().LastOrDefault();
-                    var oldMinValueAsDecimal = (decimal)ConvertType.ChangeType(oldMinValue, typeof(decimal));
-                    var oldMaxValueAsDecimal = (decimal)ConvertType.ChangeType(oldMaxValue, typeof(decimal));
+                    await OnValueChange(Min, isMin);
+                }
+                else if (isEnd)
+                {
+                    await OnValueChange(Max, isMin);
+                }
+                else if (Range)
+                {
+                    var oldMinValue = Value != null ? ((IEnumerable)Value).OfType<object>().FirstOrDefault() : null;
+                    var oldMaxValue = Value != null ? ((IEnumerable)Value).OfType<object>().LastOrDefault() : null;
+                    var oldMinValueAsDecimal = oldMinValue != null ? (decimal)(ConvertType.ChangeType(oldMinValue, typeof(decimal)) ?? 0) : 0;
+                    var oldMaxValueAsDecimal = oldMaxValue != null ? (decimal)(ConvertType.ChangeType(oldMaxValue, typeof(decimal)) ?? 0) : 0;
 
-                    await OnValueChange((isMin ? oldMinValueAsDecimal : oldMaxValueAsDecimal) + (key == "ArrowLeft" || key == "ArrowDown" ? -step : step), isMin);
+                    await OnValueChange((isMin ? oldMinValueAsDecimal : oldMaxValueAsDecimal) + (isDecrement ? -step : step), isMin);
                 }
                 else
                 {
-                    var valueAsDecimal = Value == null ? 0 : (decimal)ConvertType.ChangeType(Value, typeof(decimal));
+                    var valueChanged = Value != null ? ConvertType.ChangeType(Value, typeof(decimal)) : null;
+                    var valueAsDecimal = valueChanged != null ? (decimal)valueChanged : 0;
 
-                    await OnValueChange(valueAsDecimal + (key == "ArrowLeft" || key == "ArrowDown" ? -step : step), isMin);
+                    await OnValueChange(valueAsDecimal + (isDecrement ? -step : step), isMin);
                 }
             }
             else
             {
+                stopKeydownPropagation = false;
                 preventKeyPress = false;
             }
         }

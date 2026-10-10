@@ -1,10 +1,10 @@
 @page "/form-field"
 
 <RadzenText TextStyle="TextStyle.H2" TagName="TagName.H1" class="rz-pt-8">
-    FormField
+    Blazor FormField
 </RadzenText>
 <RadzenText TextStyle="TextStyle.Subtitle1" TagName="TagName.P" class="rz-pb-4">
-    Radzen Blazor <strong>FormField</strong> component features a floating label effect. When the user focuses on an empty input field, the label floats above, providing a visual cue as to which field is being filled out. This can help improve the layout and overall user experience of your forms.
+    The Blazor FormField wraps an input with a floating label, helper text, and validation messages, with multiple input variants.
 </RadzenText>
 
 <RadzenText Anchor="form-field#variants" TextStyle="TextStyle.H5" TagName="TagName.H2" class="rz-pt-8">
@@ -32,6 +32,7 @@
 </RadzenText>
 <RadzenText TextStyle="TextStyle.Body1" class="rz-mb-8">
     To render content before or after the input in a RadzenFormField, you need to add <code>&lt;Start&gt;</code> or <code>&lt;End&gt;</code> elements together with a <code>&lt;ChildContent&gt;</code> that contains the input component.
+    Set <code>FocusOnClick="true"</code> to focus the input when the user clicks the <code>Start</code> or <code>End</code> content or anywhere else inside the field border.
 </RadzenText>
 <RadzenExample ComponentName="FormField" Example="FormFieldChildContent">
     <FormFieldChildContent />

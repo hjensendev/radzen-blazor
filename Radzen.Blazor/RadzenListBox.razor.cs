@@ -1,4 +1,4 @@
-﻿using Microsoft.AspNetCore.Components;
+using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.Rendering;
 using Microsoft.JSInterop;
 using System;
@@ -8,40 +8,65 @@ using System.Threading.Tasks;
 namespace Radzen.Blazor
 {
     /// <summary>
-    /// RadzenListBox component.
+    /// A list box component that displays a scrollable list of items with single or multiple selection support.
+    /// RadzenListBox provides an always-visible alternative to dropdowns, ideal for showing multiple options without requiring a popup.
+    /// Displays all items in a scrollable container, making all options visible at once (unlike dropdowns which hide options in a popup).
+    /// Supports single selection (default) or multiple selection via Multiple property, built-in search/filter with configurable operators and case sensitivity,
+    /// binding to any IEnumerable data source with TextProperty and ValueProperty, custom item templates for rich list item content,
+    /// efficient rendering of large lists via IQueryable support, optional "Select All" checkbox for multiple selection mode, and keyboard navigation (Arrow keys, Page Up/Down, Home/End) for accessibility.
+    /// Use when you want to show all available options without requiring clicks to open a dropdown, or when multiple selection is needed and checkboxes would take too much space.
     /// </summary>
-    /// <typeparam name="TValue">The type of the value.</typeparam>
+    /// <typeparam name="TValue">The type of the selected value. Can be a single value or IEnumerable for multiple selection.</typeparam>
     /// <example>
+    /// Basic list box:
     /// <code>
-    /// &lt;RadzenListBox @bind-Value=@customerID TValue="string" Data=@customers TextProperty="CompanyName" ValueProperty="CustomerID" Change=@(args => Console.WriteLine($"Selected CustomerID: {args}")) /&gt;
+    /// &lt;RadzenListBox @bind-Value=@selectedId TValue="int" Data=@countries TextProperty="Name" ValueProperty="Id" Style="height: 300px;" /&gt;
+    /// </code>
+    /// Multiple selection with Select All:
+    /// <code>
+    /// &lt;RadzenListBox @bind-Value=@selectedIds TValue="IEnumerable&lt;int&gt;" Multiple="true" SelectAllText="Select All"
+    ///                 Data=@items TextProperty="Name" ValueProperty="Id" Style="height: 400px;" /&gt;
     /// </code>
     /// </example>
-    public partial class RadzenListBox<TValue> : DropDownBase<TValue>
+    public partial class RadzenListBox<
+        [System.Diagnostics.CodeAnalysis.DynamicallyAccessedMembers(System.Diagnostics.CodeAnalysis.DynamicallyAccessedMemberTypes.PublicProperties | System.Diagnostics.CodeAnalysis.DynamicallyAccessedMemberTypes.PublicFields)] TValue> : DropDownBase<TValue>
     {
+        bool stopKeydownPropagation;
+        async Task OnFilterKeyDown(Microsoft.AspNetCore.Components.Web.KeyboardEventArgs args)
+        {
+            stopKeydownPropagation = true;
+            await OnFilterKeyPress(args);
+            var key = args.Code ?? args.Key;
+            if (key == "Escape" || key == "Tab")
+            {
+                stopKeydownPropagation = false;
+            }
+        }
+
         /// <summary>
         /// Gets or sets the select all text.
         /// </summary>
         /// <value>The select all text.</value>
         [Parameter]
-        public string SelectAllText { get; set; }
+        public string? SelectAllText { get; set; }
 
         /// <summary>
         /// Specifies additional custom attributes that will be rendered by the input.
         /// </summary>
         /// <value>The attributes.</value>
         [Parameter]
-        public IReadOnlyDictionary<string, object> InputAttributes { get; set; }
+        public IReadOnlyDictionary<string, object>? InputAttributes { get; set; }
 
         /// <summary>
         /// Gets or sets the row render callback. Use it to set row attributes.
         /// </summary>
         /// <value>The row render callback.</value>
         [Parameter]
-        public Action<ListBoxItemRenderEventArgs<TValue>> ItemRender { get; set; }
+        public Action<ListBoxItemRenderEventArgs<TValue>>? ItemRender { get; set; }
 
         internal ListBoxItemRenderEventArgs<TValue> ItemAttributes(RadzenListBoxItem<TValue> item)
         {
-            var disabled = !string.IsNullOrEmpty(DisabledProperty) ? GetItemOrValueFromProperty(item.Item, DisabledProperty) : false;
+            var disabled = !string.IsNullOrEmpty(DisabledProperty) && item.Item != null ? GetItemOrValueFromProperty(item.Item, DisabledProperty) : false;
 
             var args = new ListBoxItemRenderEventArgs<TValue>()
             {
@@ -58,11 +83,22 @@ namespace Radzen.Blazor
             return args;
         }
 
+        private int itemIndex;
+
+        internal override RenderFragment RenderItems()
+        {
+            itemIndex = -1;
+            return base.RenderItems();
+        }
+
         internal override void RenderItem(RenderTreeBuilder builder, object item)
         {
+            itemIndex++;
+
             builder.OpenComponent(0, typeof(RadzenListBoxItem<TValue>));
             builder.AddAttribute(1, "ListBox", this);
             builder.AddAttribute(2, "Item", item);
+            builder.AddAttribute(4, "Index", AllowVirtualization ? VirtualStartIndex + itemIndex : itemIndex);
 
             if (DisabledProperty != null)
             {
@@ -74,27 +110,79 @@ namespace Radzen.Blazor
         }
 
         /// <summary>
-        /// Handles the <see cref="E:KeyDown" /> event.
+        /// Gets the identifier of the listbox option at the specified index.
+        /// </summary>
+        /// <param name="index">The zero-based index of the option.</param>
+        /// <returns>A stable element identifier for the option.</returns>
+        internal string GetItemId(int index)
+        {
+            return $"{ListId}-{index}";
+        }
+
+        /// <summary>
+        /// Gets the identifier of the currently active (keyboard focused) option, or null when none is active.
+        /// </summary>
+        /// <returns>The active option identifier or null.</returns>
+        internal string? ActiveDescendantId => selectedIndex >= 0 ? GetItemId(selectedIndex) : null;
+
+        /// <summary>
+        /// Gets the accessible name applied to the listbox. Uses the consumer supplied aria-label attribute when present,
+        /// falls back to the empty selection label unless the consumer supplies an aria-labelledby attribute.
+        /// </summary>
+        /// <returns>The accessible name or null when aria-labelledby is supplied via attributes.</returns>
+        internal string? ListboxAriaLabel
+        {
+            get
+            {
+                if (Attributes != null && Attributes.TryGetValue("aria-label", out var ariaLabel))
+                {
+                    return Convert.ToString(ariaLabel, Culture);
+                }
+
+                if (Attributes != null && Attributes.ContainsKey("aria-labelledby"))
+                {
+                    return null;
+                }
+
+                return EmptyAriaLabel;
+            }
+        }
+
+        /// <summary>
+        /// Gets the consumer supplied aria-labelledby attribute value applied to the listbox, or null when not supplied.
+        /// </summary>
+        /// <returns>The labelling element identifier or null.</returns>
+        internal string? ListboxAriaLabelledBy => Attributes != null && Attributes.TryGetValue("aria-labelledby", out var ariaLabelledBy) ? Convert.ToString(ariaLabelledBy, Culture) : null;
+
+        /// <summary>
+        /// Handles the key down event.
         /// </summary>
         /// <param name="args">The <see cref="Microsoft.AspNetCore.Components.Web.KeyboardEventArgs"/> instance containing the event data.</param>
         protected async System.Threading.Tasks.Task OnKeyDown(Microsoft.AspNetCore.Components.Web.KeyboardEventArgs args)
         {
+            ArgumentNullException.ThrowIfNull(args);
             if (Disabled)
+            {
                 return;
+            }
 
             var key = $"{args.Key}".Trim();
 
-            if (AllowFiltering && key.Length == 1)
+            if (AllowFiltering && key.Length == 1 && JSRuntime != null)
             {
-                await JSRuntime.InvokeAsync<string>("Radzen.setInputValue", search, key);
                 await JSRuntime.InvokeVoidAsync("Radzen.focusElement", SearchID);
+                if (JSRuntime is not IJSInProcessRuntime)
+                {
+                    await JSRuntime.InvokeAsync<string>("Radzen.setInputValue", search, key);
+                }
             }
 
             await OnKeyPress(args, false);
         }
 
-        private bool visibleChanged = false;
-        private bool disabledChanged = false;
+
+        private bool visibleChanged;
+        private bool disabledChanged;
         private bool firstRender = true;
 
         /// <inheritdoc />
@@ -135,7 +223,7 @@ namespace Radzen.Blazor
                         reload = true;
                     }
 
-                    if (!Disabled)
+                    if (!Disabled && JSRuntime != null)
                     {
                         await JSRuntime.InvokeVoidAsync("Radzen.preventArrows", Element);
                         reload = true;
@@ -149,6 +237,22 @@ namespace Radzen.Blazor
             }
         }
 
+        private string? emptyText;
+
+        /// <summary>
+        /// Gets or sets the empty text shown when Data is empty.
+        /// </summary>
+        /// <value>The empty text.</value>
+        [Parameter]
+        public string EmptyText { get => emptyText ?? Localize(nameof(RadzenStrings.ListBox_EmptyText)); set => emptyText = value; }
+
+        /// <summary>
+        /// Gets or sets the empty template shown when Data is empty.
+        /// </summary>
+        /// <value>The empty template.</value>
+        [Parameter]
+        public RenderFragment? EmptyTemplate { get; set; }
+
         /// <summary>
         /// Gets or sets a value indicating whether is read only.
         /// </summary>
@@ -156,10 +260,17 @@ namespace Radzen.Blazor
         [Parameter]
         public bool ReadOnly { get; set; }
 
+        /// <summary>
+        /// Gets or sets the input size.
+        /// </summary>
+        /// <value>The input size.</value>
+        [Parameter]
+        public InputSize InputSize { get; set; } = InputSize.Medium;
+
         /// <inheritdoc />
         protected override string GetComponentCssClass()
         {
-            return GetClassList("rz-listbox rz-inputtext").ToString();
+            return GetClassList("rz-listbox rz-inputtext").AddInputSize(InputSize).ToString();
         }
 
         /// <inheritdoc />

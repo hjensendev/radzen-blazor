@@ -1,17 +1,12 @@
 ﻿@page "/datagrid-column-template"
 
 <RadzenText TextStyle="TextStyle.H2" TagName="TagName.H1" class="rz-pt-8">
-    DataGrid <strong>Column Template</strong>
+    Blazor DataGrid <strong>Column Template</strong>
 </RadzenText>
 <RadzenText TextStyle="TextStyle.Subtitle1" TagName="TagName.P" class="rz-pb-4">
-    The <strong>Template</strong> allows you to customize the way data is displayed.
-</RadzenText>
-<RadzenText TextStyle="TextStyle.Body2" class="rz-my-6">
-    Common uses: Record numbering, displaying an image depending on property value, 
-    displaying multiple properties in the same column, linking to other pages,
-    data formatting and HTML embedding.
+    Customize Blazor DataGrid cell content with column templates - render images, badges, buttons, links, or any markup in a column instead of plain text.
 </RadzenText>
 
-<RadzenExample ComponentName="DataGrid" Example="DataGridColumnTemplate" AdditionalSourceCodePages=@(new List<string>() { "DialogCardPage.razor" })>
+<RadzenExample ComponentName="DataGrid" Example="DataGridColumnTemplate" AdditionalSourceCodePages=@(new List<string>() { "/demos/Pages/DialogCardPage.razor" })>
     <DataGridColumnTemplate/>
 </RadzenExample>

@@ -1,5 +1,7 @@
-﻿using Microsoft.AspNetCore.Components;
+using System.Diagnostics.CodeAnalysis;
+using Microsoft.AspNetCore.Components;
 using Microsoft.JSInterop;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
@@ -32,12 +34,14 @@ namespace Radzen.Blazor
     /// </example>
     public partial class RadzenGoogleMap : RadzenComponent
     {
+        IJSObjectReference? _jsRef;
+        int _jsRefVersion;
         /// <summary>
         /// Gets or sets the data - collection of RadzenGoogleMapMarker.
         /// </summary>
         /// <value>The data.</value>
         [Parameter]
-        public IEnumerable<RadzenGoogleMapMarker> Data { get; set; }
+        public IEnumerable<RadzenGoogleMapMarker>? Data { get; set; }
 
         /// <summary>
         /// Gets or sets the map click callback.
@@ -54,25 +58,32 @@ namespace Radzen.Blazor
         public EventCallback<RadzenGoogleMapMarker> MarkerClick { get; set; }
 
         /// <summary>
+        /// Gets or sets the callback raised when the visible map area changes. It fires once the map is loaded and each time the map becomes idle after panning or zooming.
+        /// </summary>
+        /// <value>The bounds changed callback.</value>
+        [Parameter]
+        public EventCallback<GoogleMapBoundsChangedEventArgs> BoundsChanged { get; set; }
+
+        /// <summary>
         /// Gets or sets the Google API key.
         /// </summary>
         /// <value>The Google API key.</value>
         [Parameter]
-        public string ApiKey { get; set; }
+        public string? ApiKey { get; set; }
 
         /// <summary>
         /// Gets or sets the Google Map Id.
         /// </summary>
         /// <value>The Google Map Id.</value>
         [Parameter]
-        public string MapId { get; set; }
+        public string? MapId { get; set; }
 
         /// <summary>
         /// Gets or sets the Google map options: https://developers.google.com/maps/documentation/javascript/reference/map#MapOptions.
         /// </summary>
         /// <value>The Google map options.</value>
         [Parameter]
-        public Dictionary<string, object> Options { get; set; }
+        public Dictionary<string, object>? Options { get; set; }
 
         double zoom = 8;
         /// <summary>
@@ -128,7 +139,7 @@ namespace Radzen.Blazor
 
         async Task UpdateMap()
         {
-            if (!firstRender)
+            if (!firstRender && JSRuntime != null)
             {
                 await JSRuntime.InvokeVoidAsync("Radzen.updateMap", UniqueID, ApiKey, Zoom, Center);
             }
@@ -139,7 +150,7 @@ namespace Radzen.Blazor
         /// </summary>
         /// <value>The markers.</value>
         [Parameter]
-        public RenderFragment Markers { get; set; }
+        public RenderFragment? Markers { get; set; }
 
         List<RadzenGoogleMapMarker> markers = new List<RadzenGoogleMapMarker>();
 
@@ -174,7 +185,7 @@ namespace Radzen.Blazor
         }
 
         /// <summary>
-        /// Handles the <see cref="E:MapClick" /> event.
+        /// Handles the MapClick event.
         /// </summary>
         /// <param name="args">The <see cref="GoogleMapClickEventArgs"/> instance containing the event data.</param>
         [JSInvokable("RadzenGoogleMap.OnMapClick")]
@@ -193,9 +204,35 @@ namespace Radzen.Blazor
             await MarkerClick.InvokeAsync(marker);
         }
 
+        /// <summary>
+        /// Handles the BoundsChanged event.
+        /// </summary>
+        /// <param name="args">The <see cref="GoogleMapBoundsChangedEventArgs"/> instance containing the event data.</param>
+        [JSInvokable("RadzenGoogleMap.OnBoundsChanged")]
+        public async System.Threading.Tasks.Task OnBoundsChanged(GoogleMapBoundsChangedEventArgs args)
+        {
+            await BoundsChanged.InvokeAsync(args);
+        }
+
         bool firstRender = true;
+        bool _visibleChanged;
 
         /// <inheritdoc />
+        public override async Task SetParametersAsync(ParameterView parameters)
+        {
+            if (parameters.DidParameterChange(nameof(Visible), Visible))
+            {
+                _visibleChanged = true;
+            }
+
+            await base.SetParametersAsync(parameters);
+        }
+
+        /// <inheritdoc />
+        [DynamicDependency(DynamicallyAccessedMemberTypes.All, typeof(GoogleMapMarkerData))]
+        [DynamicDependency(DynamicallyAccessedMemberTypes.All, typeof(GoogleMapPosition))]
+        [DynamicDependency(DynamicallyAccessedMemberTypes.All, typeof(GoogleMapClickEventArgs))]
+        [DynamicDependency(DynamicallyAccessedMemberTypes.All, typeof(GoogleMapBoundsChangedEventArgs))]
         protected override async Task OnAfterRenderAsync(bool firstRender)
         {
             await base.OnAfterRenderAsync(firstRender);
@@ -204,15 +241,48 @@ namespace Radzen.Blazor
 
             var data = Data != null ? Data : markers;
 
-            if (firstRender)
+            if (JSRuntime != null)
             {
-                await JSRuntime.InvokeVoidAsync("Radzen.createMap", Element, Reference, UniqueID, ApiKey, MapId, Zoom, Center,
-                     data.Select(m => new { Title = m.Title, Label = m.Label, Position = m.Position }), Options, FitBoundsToMarkersOnUpdate, Culture.TwoLetterISOLanguageName);
-            }
-            else
-            {
-                await JSRuntime.InvokeVoidAsync("Radzen.updateMap", UniqueID, ApiKey, null, null,
-                             data.Select(m => new { Title = m.Title, Label = m.Label, Position = m.Position }), Options, FitBoundsToMarkersOnUpdate, Culture.TwoLetterISOLanguageName);
+                if (firstRender || _visibleChanged)
+                {
+                    _visibleChanged = false;
+
+                    var version = ++_jsRefVersion;
+                    var jsRef = _jsRef;
+                    _jsRef = null;
+
+                    if (jsRef != null)
+                    {
+                        await jsRef.InvokeVoidAsync("dispose");
+                        await jsRef.DisposeAsync();
+                    }
+
+                    if (version != _jsRefVersion)
+                    {
+                        return;
+                    }
+
+                    if (Visible)
+                    {
+                        var created = await JSRuntime.InvokeAsync<IJSObjectReference>("Radzen.createMap", Element, Reference, UniqueID, ApiKey, MapId, Zoom, Center,
+                             data.Select(m => new GoogleMapMarkerData { Title = m.Title, Label = m.Label, Position = m.Position }), Options, FitBoundsToMarkersOnUpdate, Culture.TwoLetterISOLanguageName);
+
+                        if (version == _jsRefVersion)
+                        {
+                            _jsRef = created;
+                        }
+                        else if (created != null)
+                        {
+                            await created.InvokeVoidAsync("dispose");
+                            await created.DisposeAsync();
+                        }
+                    }
+                }
+                else if (Visible && _jsRef != null)
+                {
+                    await JSRuntime.InvokeVoidAsync("Radzen.updateMap", UniqueID, ApiKey, null, null,
+                                 data.Select(m => new GoogleMapMarkerData { Title = m.Title, Label = m.Label, Position = m.Position }), Options, FitBoundsToMarkersOnUpdate, Culture.TwoLetterISOLanguageName);
+                }
             }
         }
 
@@ -221,10 +291,26 @@ namespace Radzen.Blazor
         {
             base.Dispose();
 
-            if (IsJSRuntimeAvailable)
+            _jsRefVersion++;
+            var jsRef = _jsRef;
+            _jsRef = null;
+
+            if (IsJSRuntimeAvailable && jsRef != null)
             {
-                JSRuntime.InvokeVoidAsync("Radzen.destroyMap", UniqueID);
+                jsRef.InvokeVoid("dispose");
+                jsRef.DisposeFireAndForget();
             }
+
+            GC.SuppressFinalize(this);
         }
+    }
+
+    internal class GoogleMapMarkerData
+    {
+        public string? Title { get; set; }
+
+        public string? Label { get; set; }
+
+        public GoogleMapPosition? Position { get; set; }
     }
 }

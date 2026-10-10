@@ -1,14 +1,15 @@
 @page "/theme-service/{version?}"
 @inject NavigationManager NavigationManager
 <RadzenText TextStyle="TextStyle.H2" TagName="TagName.H1" class="rz-pt-8">
-    ThemeService
+    Blazor ThemeService
 </RadzenText>
 <RadzenText TextStyle="TextStyle.Subtitle1" TagName="TagName.P" class="rz-pb-4">
-    The <code>ThemeService</code> allows you to change the theme of your application at runtime. It provides a set of methods to change the theme, get the current theme, and listen to theme changes.
+    Change the theme of your application at runtime with dynamic theme switching.
 </RadzenText>
 <RadzenAlert AlertStyle="AlertStyle.Base" Variant="Variant.Flat" AllowClose="false" class="rz-mb-6">
 The <strong>ThemeService</strong> is registered by the <strong>AddRadzenComponents()</strong> method and requires <strong>RadzenTheme</strong>. Check the <RadzenLink Path="/get-started" Text="Get started" /> instructions.
 </RadzenAlert>
+
 <RadzenExample ComponentName="ThemeService" Example="ThemeServiceConfig">
     <ThemeServiceConfig />
 </RadzenExample>
@@ -20,7 +21,7 @@ The Radzen.Blazor library provides a built-in service that persists the current 
 </RadzenText>
 <RadzenTabs SelectedIndex=@selectedIndex Change="@OnTabChange">
     <Tabs>
-        <RadzenTabsItem Text=".NET 8">
+        <RadzenTabsItem Text=".NET 8 &amp; 9 &amp; 10">
 @RegisterService
 @MainLayout
 <RadzenText TextStyle="TextStyle.H6" TagName="TagName.H3" class="rz-mt-12 rz-mb-4">3. Open the <code>App.razor</code> file of your application and add this code:</RadzenText>
@@ -32,6 +33,9 @@ The Radzen.Blazor library provides a built-in service that persists the current 
 
     [Inject]
     private ThemeService ThemeService { get; set; }
+    
+    [Inject]
+    private IOptions&lt;CookieThemeServiceOptions&gt; Options { get; set; }
 
     protected override void OnInitialized()
     {
@@ -45,29 +49,21 @@ The Radzen.Blazor library provides a built-in service that persists the current 
             {
                 ThemeService.SetTheme(theme, false);
             }
+            else
+            {
+                HttpContext.Response.Cookies.Append("MyApplicationTheme", "material" , new CookieOptions { Secure = Options.Value.IsSecure, Expires = DateTimeOffset.Now.Add(Options.Value.Duration) });    
+            }
         }
     }
 }
 </code>
 </pre>
         </RadzenTabsItem>
-        <RadzenTabsItem Text=".NET 7">
-@RegisterService
-@MainLayout
-@Host
-@Persist("_Host.cshtml")
-        </RadzenTabsItem>
-        <RadzenTabsItem Text=".NET 6">
-@RegisterService
-@MainLayout
-@Host
-@Persist("_Layout.cshtml")
-        </RadzenTabsItem>
     </Tabs>
 </RadzenTabs>
 
 @code {
-    private static readonly string[] versions = ["net8", "net7", "net6"];
+    private static readonly string[] versions = ["net8"];
 
     private int selectedIndex = 0;
 
@@ -81,6 +77,10 @@ The Radzen.Blazor library provides a built-in service that persists the current 
         base.OnParametersSet();
 
         selectedIndex = Array.IndexOf(versions, CurrentVersion);
+        if (selectedIndex < 0)
+        {
+            selectedIndex = 0;
+        }
     }
 
     private void OnTabChange(int index)
@@ -112,29 +112,20 @@ builder.Services.AddRadzenCookieThemeService(options =&gt;
 Register CookieThemeService in all <code>Program.cs</code> files of your application.
 </RadzenAlert>
         </text>;
-    RenderFragment Host => @<text>
-        <RadzenText TextStyle="TextStyle.H6" TagName="TagName.H3" class="rz-mt-12 rz-mb-4">3. Open <code>_Host.cshtml</code> and add this code:</RadzenText>
-<pre class="rz-p-4">
-<code>
-@@inject Radzen.ThemeService ThemeService
-@@{
-    var theme = HttpContext.Request.Cookies["MyApplicationTheme"];
-
-    if (!string.IsNullOrEmpty(theme))
-    {
-        ThemeService.SetTheme(theme, true);
-    }
 }
-</code>
-</pre>
-    </text>;
 
-    RenderFragment<string> Persist => fileName => @<text>
-<RadzenText TextStyle="TextStyle.H6" TagName="TagName.H3" class="rz-mt-12 rz-mb-4">4. Open <code>@fileName</code> and append the following code after the last <code>script</code> tag:</RadzenText>
-<pre class="rz-p-4">
-<code>
-&lt;persist-component-state /&gt;
-</code>
-</pre>
-    </text>;
-}
+<RadzenRow>
+    <RadzenColumn Size="12">
+        <RadzenText Anchor="theme-service#video-changing-themes-at-runtime" TextStyle="TextStyle.H5" TagName="TagName.H2" class="rz-pt-12">
+            Changing themes at runtime in Radzen Blazor Studio
+        </RadzenText>
+        <RadzenText TextStyle="TextStyle.Subtitle1" TagName="TagName.P" class="rz-mb-6">
+            Use Radzen ThemeService and a RadzenDropDown to change the app’s theme at runtime.
+        </RadzenText>
+    <RadzenCard Variant="Variant.Outlined" class="rz-p-7">
+        <div class="embed-container">
+            <iframe src="https://www.youtube.com/embed/JWkYIAIyFFs?&rel=0" frameborder="0" allowfullscreen=""></iframe>
+        </div>
+    </RadzenCard>
+    </RadzenColumn>
+</RadzenRow>

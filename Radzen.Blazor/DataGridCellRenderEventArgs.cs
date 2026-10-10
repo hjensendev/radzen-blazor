@@ -1,0 +1,17 @@
+using Radzen.Blazor;
+
+namespace Radzen;
+
+/// <summary>
+/// Supplies information about a <see cref="RadzenDataGrid{TItem}.CellRender" /> event that is being raised.
+/// </summary>
+/// <typeparam name="T">The data item type.</typeparam>
+public class DataGridCellRenderEventArgs<
+        [System.Diagnostics.CodeAnalysis.DynamicallyAccessedMembers(System.Diagnostics.CodeAnalysis.DynamicallyAccessedMemberTypes.PublicProperties | System.Diagnostics.CodeAnalysis.DynamicallyAccessedMemberTypes.PublicFields)] T> : RowRenderEventArgs<T> where T : notnull
+{
+    /// <summary>
+    /// Gets the RadzenDataGridColumn which this cells represents.
+    /// </summary>
+    public RadzenDataGridColumn<T>? Column { get; internal set; }
+}
+

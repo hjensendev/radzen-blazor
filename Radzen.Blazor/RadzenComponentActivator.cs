@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using Microsoft.AspNetCore.Components;
 
 namespace Radzen
@@ -28,7 +29,9 @@ namespace Radzen
         /// </summary>
         /// <typeparam name="TOriginal"></typeparam>
         /// <typeparam name="TOverride"></typeparam>
-        public void Override<TOriginal, TOverride>()
+        public void Override<
+            [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] TOriginal,
+            [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] TOverride>()
         {
             Override(typeof(TOriginal), typeof(TOverride));
         }
@@ -38,7 +41,9 @@ namespace Radzen
         /// </summary>
         /// <param name="original"></param>
         /// <param name="override"></param>
-        public void Override(Type original, Type @override)
+        public void Override(
+            [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] Type original,
+            [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] Type @override)
         {
             replacedTypes.Add(original, @override);
         }
@@ -49,28 +54,36 @@ namespace Radzen
         /// <param name="componentType"></param>
         /// <returns></returns>
         /// <exception cref="ArgumentException"></exception>
-        public IComponent CreateInstance(Type componentType)
+        [UnconditionalSuppressMessage(TrimMessages.Trimming, TrimMessages.IL2055, Justification = TrimMessages.ComponentTypePreserved)]
+        [UnconditionalSuppressMessage(TrimMessages.Trimming, TrimMessages.IL2067, Justification = TrimMessages.ComponentTypePreserved)]
+        [UnconditionalSuppressMessage(TrimMessages.Trimming, TrimMessages.IL2072, Justification = TrimMessages.ComponentTypePreserved)]
+        public IComponent CreateInstance([DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] Type componentType)
         {
+            ArgumentNullException.ThrowIfNull(componentType);
+
             if (!typeof(IComponent).IsAssignableFrom(componentType))
             {
                 throw new ArgumentException($"The type {componentType.FullName} does not implement {nameof(IComponent)}.", nameof(componentType));
             }
 
-            if (replacedTypes.ContainsKey(componentType))
+            if (replacedTypes.TryGetValue(componentType, out var replacedType))
             {
-                componentType = replacedTypes[componentType];
+                componentType = replacedType;
             }
             else if (componentType.IsGenericType)
             {
                 var genericTypeDefinition = componentType.GetGenericTypeDefinition();
 
-                if (replacedTypes.ContainsKey(genericTypeDefinition))
+                if (replacedTypes.TryGetValue(genericTypeDefinition, out var replacedGenericType))
                 {
-                    componentType = replacedTypes[genericTypeDefinition].MakeGenericType(componentType.GetGenericArguments());
+                    componentType = replacedGenericType.MakeGenericType(componentType.GetGenericArguments());
                 }
             }
 
-            return (IComponent)Activator.CreateInstance(componentType);
+        var instance = Activator.CreateInstance(componentType)
+            ?? throw new InvalidOperationException($"Unable to create an instance of '{componentType.FullName}'.");
+
+        return (IComponent)instance;
         }
     }
 }

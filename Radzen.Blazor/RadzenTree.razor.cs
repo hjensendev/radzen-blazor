@@ -1,9 +1,11 @@
 using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.Rendering;
 using Microsoft.AspNetCore.Components.Web;
+using Microsoft.JSInterop;
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Reflection.Emit;
 using System.Threading.Tasks;
@@ -11,33 +13,61 @@ using System.Threading.Tasks;
 namespace Radzen.Blazor
 {
     /// <summary>
-    /// A component which displays a hierarchy of items. Supports inline definition and data-binding.
+    /// A hierarchical tree view component for displaying nested data structures with expand/collapse functionality.
+    /// RadzenTree supports both inline item definition and data-binding for displaying file systems, organization charts, category hierarchies, or any tree-structured data.
+    /// Organizes data in a parent-child hierarchy where items can be expanded to reveal children.
+    /// Supports static definition declaring tree structure using nested RadzenTreeItem components, data binding to hierarchical data using RadzenTreeLevel components,
+    /// single or multiple item selection with checkboxes, individual item or programmatic expand/collapse control, custom icons per item or data-bound icon properties,
+    /// custom rendering templates for tree items, keyboard navigation (Arrow keys, Space/Enter, Home/End) for accessibility, and Change/Expand/selection events.
+    /// For data binding, use RadzenTreeLevel to define how to render each hierarchy level from your data model. For checkbox selection, use AllowCheckBoxes and bind to CheckedValues.
     /// </summary>
     /// <example>
-    ///   <code>
+    /// Static tree with inline items:
+    /// <code>
     /// &lt;RadzenTree&gt;
-    ///     &lt;RadzenTreeItem Text="BMW"&gt;
-    ///         &lt;RadzenTreeItem Text="M3" /&gt;
-    ///         &lt;RadzenTreeItem Text="M5" /&gt;
-    ///     &lt;/RadzenTreeItem&gt;
-    ///     &lt;RadzenTreeItem Text="Audi"&gt;
-    ///         &lt;RadzenTreeItem Text="RS4" /&gt;
-    ///         &lt;RadzenTreeItem Text="RS6" /&gt;
-    ///     &lt;/RadzenTreeItem&gt;
-    ///     &lt;RadzenTreeItem Text="Mercedes"&gt;
-    ///         &lt;RadzenTreeItem Text="C63 AMG" /&gt;
-    ///         &lt;RadzenTreeItem Text="S63 AMG" /&gt;
+    ///     &lt;RadzenTreeItem Text="Documents" Icon="folder"&gt;
+    ///         &lt;RadzenTreeItem Text="Work" Icon="folder"&gt;
+    ///             &lt;RadzenTreeItem Text="report.pdf" Icon="description" /&gt;
+    ///         &lt;/RadzenTreeItem&gt;
+    ///         &lt;RadzenTreeItem Text="Personal" Icon="folder"&gt;
+    ///             &lt;RadzenTreeItem Text="photo.jpg" Icon="image" /&gt;
+    ///         &lt;/RadzenTreeItem&gt;
     ///     &lt;/RadzenTreeItem&gt;
     /// &lt;/RadzenTree&gt;
-    ///   </code>
+    /// </code>
+    /// Data-bound tree with selection:
+    /// <code>
+    /// &lt;RadzenTree Data=@categories AllowCheckBoxes="true" @bind-CheckedValues=@selectedCategories Change=@OnChange&gt;
+    ///     &lt;RadzenTreeLevel TextProperty="Name" ChildrenProperty="Children" /&gt;
+    /// &lt;/RadzenTree&gt;
+    /// @code {
+    ///     IEnumerable&lt;object&gt; selectedCategories;
+    ///     void OnChange(TreeEventArgs args) => Console.WriteLine($"Selected: {args.Text}");
+    /// }
+    /// </code>
     /// </example>
+    [UnconditionalSuppressMessage(TrimMessages.Trimming, TrimMessages.IL2026, Justification = TrimMessages.DataTypePreserved)]
     public partial class RadzenTree : RadzenComponent
     {
         /// <summary>
         /// Gets or sets the open button aria-label attribute.
         /// </summary>
         [Parameter]
-        public string SelectItemAriaLabel { get; set; } = "Select item";
+        public string? SelectItemAriaLabel { get => selectItemAriaLabel ?? Localize(nameof(RadzenStrings.Tree_SelectItemAriaLabel)); set => selectItemAriaLabel = value; }
+
+        private string? selectItemAriaLabel;
+
+        /// <summary>
+        /// Gets or sets the accessible name of the tree, exposed via the <c>aria-label</c> attribute on the <c>role="tree"</c> container.
+        /// </summary>
+        [Parameter]
+        public string? AriaLabel { get; set; }
+
+        /// <summary>
+        /// Gets or sets the id of the element that labels the tree, exposed via the <c>aria-labelledby</c> attribute on the <c>role="tree"</c> container.
+        /// </summary>
+        [Parameter]
+        public string? AriaLabelledBy { get; set; }
 
         /// <inheritdoc />
         protected override string GetComponentCssClass()
@@ -45,9 +75,9 @@ namespace Radzen.Blazor
             return "rz-tree";
         }
 
-        internal RadzenTreeItem SelectedItem { get; private set; }
+        internal RadzenTreeItem? SelectedItem { get; private set; }
 
-        IList<RadzenTreeLevel> Levels { get; set; } = new List<RadzenTreeLevel>();
+        IList<RadzenTreeLevel>? Levels { get; set; } = new List<RadzenTreeLevel>();
 
         /// <summary>
         /// A callback that will be invoked when the user selects an item.
@@ -119,7 +149,7 @@ namespace Radzen.Blazor
         /// A callback that will be invoked when item is rendered.
         /// </summary>
         [Parameter]
-        public Action<TreeItemRenderEventArgs> ItemRender { get; set; }
+        public Action<TreeItemRenderEventArgs>? ItemRender { get; set; }
 
         /// <summary>
         /// Gets or sets the context menu callback.
@@ -130,10 +160,12 @@ namespace Radzen.Blazor
 
         internal Tuple<Radzen.TreeItemRenderEventArgs, IReadOnlyDictionary<string, object>> ItemAttributes(RadzenTreeItem item)
         {
-            var args = new TreeItemRenderEventArgs() { Data = item.GetAllChildValues(), Value = item.Value };
+            var args = new TreeItemRenderEventArgs() { Value = item.Value };
 
             if (ItemRender != null)
             {
+                // Avoid walking the subtree when no handler can consume it.
+                args.Data = item.GetAllChildValues();
                 ItemRender(args);
             }
 
@@ -145,19 +177,19 @@ namespace Radzen.Blazor
         /// </summary>
         /// <value>The child content.</value>
         [Parameter]
-        public RenderFragment ChildContent { get; set; }
+        public RenderFragment? ChildContent { get; set; }
 
         /// <summary>
         /// Specifies the collection of data items which RadzenTree will create its items from.
         /// </summary>
         [Parameter]
-        public IEnumerable Data { get; set; }
+        public IEnumerable? Data { get; set; }
 
         /// <summary>
         /// Specifies the selected value. Use with <c>@bind-Value</c> to sync it with a property.
         /// </summary>
         [Parameter]
-        public object Value { get; set; }
+        public object? Value { get; set; }
 
         /// <summary>
         /// A callback which will be invoked when <see cref="Value" /> changes.
@@ -194,26 +226,26 @@ namespace Radzen.Blazor
         /// Gets or sets the checked values. Use with <c>@bind-CheckedValues</c> to sync it with a property.
         /// </summary>
         [Parameter]
-        public IEnumerable<object> CheckedValues { get; set; } = Enumerable.Empty<object>();
+        public IEnumerable<object>? CheckedValues { get; set; } = Enumerable.Empty<object>();
 
         /// <summary>
         /// Gets or sets the CSS classes added to the item content.
         /// </summary>
         [Parameter]
-        public string ItemContentCssClass { get; set; }
+        public string? ItemContentCssClass { get; set; }
 
         /// <summary>
         /// Gets or sets the CSS classes added to the item icon.
         /// </summary>
         [Parameter]
-        public string ItemIconCssClass { get; set; }
+        public string? ItemIconCssClass { get; set; }
 
         /// <summary>
         /// Gets or sets the CSS classes added to the item label.
         /// </summary>
         [Parameter]
 
-        public string ItemLabelCssClass { get; set; }
+        public string? ItemLabelCssClass { get; set; }
 
         internal List<RadzenTreeItem> items = new List<RadzenTreeItem>();
 
@@ -221,7 +253,14 @@ namespace Radzen.Blazor
         {
             if (items.IndexOf(item) == -1)
             {
+                var wasEmpty = items.Count == 0;
+
                 items.Add(item);
+
+                if (wasEmpty)
+                {
+                    InvokeAsync(StateHasChanged);
+                }
             }
         }
 
@@ -233,15 +272,15 @@ namespace Radzen.Blazor
             }
         }
 
-        internal async Task SetCheckedValues(IEnumerable<object> values)
+        internal async Task SetCheckedValues(IEnumerable<object?>? values)
         {
-            CheckedValues = values != null ? values.ToList() : null;
+            CheckedValues = values != null ? (IEnumerable<object>)values.ToList() : null;
             await CheckedValuesChanged.InvokeAsync(CheckedValues);
         }
 
-        internal IEnumerable<object> UncheckedValues { get; set; } = Enumerable.Empty<object>();
+        internal IEnumerable<object?>? UncheckedValues { get; set; } = Enumerable.Empty<object?>();
 
-        internal void SetUncheckedValues(IEnumerable<object> values)
+        internal void SetUncheckedValues(IEnumerable<object?> values)
         {
             UncheckedValues = values.ToList();
         }
@@ -252,8 +291,8 @@ namespace Radzen.Blazor
         [Parameter]
         public EventCallback<IEnumerable<object>> CheckedValuesChanged { get; set; }
 
-        void RenderTreeItem(RenderTreeBuilder builder, object data, RenderFragment<RadzenTreeItem> template, Func<object, string> text, Func<object, bool> checkable,
-            Func<object, bool> hasChildren, Func<object, bool> expanded, Func<object, bool> selected, IEnumerable children = null)
+        void RenderTreeItem(RenderTreeBuilder builder, object data, RenderFragment<RadzenTreeItem>? template, Func<object, string> text, Func<object, bool> checkable,
+            Func<object, bool> hasChildren, Func<object, bool> expanded, Func<object, bool> selected, IEnumerable? children = null)
         {
             builder.OpenComponent<RadzenTreeItem>(0);
             builder.AddAttribute(1, nameof(RadzenTreeItem.Text), text(data));
@@ -268,32 +307,35 @@ namespace Radzen.Blazor
 
         RenderFragment RenderChildren(IEnumerable children, int depth)
         {
-            var level = depth < Levels.Count() ? Levels.ElementAt(depth) : Levels.Last();
-
-            return new RenderFragment(builder =>
+            if (Levels == null)
             {
-                Func<object, string> text = null;
-                Func<object, bool> checkable = null;
+                return _ => { };
+            }
+
+            var level = depth < Levels.Count ? Levels.ElementAt(depth) : (Levels.Count > 0 ? Levels.LastOrDefault() : null);
+            if (level == null)
+            {
+                return _ => { };
+            }
+
+            return builder =>
+            {
+                Func<object, string>? text = null;
+                Func<object, bool>? checkable = null;
 
                 foreach (var data in children)
                 {
-                    if (text == null)
-                    {
-                        text = level.Text ??
-                            (!string.IsNullOrEmpty(level.TextProperty) ? Getter<string>(data, level.TextProperty) : null) ??
-                            (o => "");
-                    }
+                    text ??= level.Text
+                        ?? (!string.IsNullOrEmpty(level.TextProperty) ? Getter<string>(data, level.TextProperty) : null)
+                        ?? (_ => "");
 
-                    if (checkable == null)
-                    {
-                        checkable = level.Checkable ??
-                            (!string.IsNullOrEmpty(level.CheckableProperty) ? Getter<bool>(data, level.CheckableProperty) : null) ??
-                            (o => true);
-                    }
+                    checkable ??= level.Checkable
+                        ?? (!string.IsNullOrEmpty(level.CheckableProperty) ? Getter<bool>(data, level.CheckableProperty) : null)
+                        ?? (_ => true);
 
-                    RenderTreeItem(builder, data, level.Template, text, checkable, level.HasChildren, level.Expanded, level.Selected);
+                    RenderTreeItem(builder, data, level.Template, text, checkable, level.HasChildren ?? (_ => false), level.Expanded ?? (_ => false), level.Selected ?? (_ => false));
 
-                    var hasChildren = level.HasChildren(data);
+                    var hasChildren = level.HasChildren != null && level.HasChildren(data);
 
                     if (!string.IsNullOrEmpty(level.ChildrenProperty))
                     {
@@ -306,13 +348,13 @@ namespace Radzen.Blazor
                         }
                         else
                         {
-                            builder.AddAttribute(7, "ChildContent", (RenderFragment)null);
+                            builder.AddAttribute(7, "ChildContent", (RenderFragment?)null);
                         }
                     }
 
                     builder.CloseComponent();
                 }
-            });
+            };
         }
 
         internal async Task SelectItem(RadzenTreeItem item)
@@ -356,7 +398,7 @@ namespace Radzen.Blazor
         /// <param name="item">The item to be reloaded or <c>null</c> to refresh
         /// the root nodes of the tree.</param>
         /// <returns>A task to wait for the operation to complete.</returns>
-        public async Task Reload(RadzenTreeItem item = null) {
+        public async Task Reload(RadzenTreeItem? item = null) {
             // Implementation node: I am absolute not sure whether "ExpandItem"
             // is the "right" way to to this, but it does exactly what I need.
             // The rationale behind the public "Reload" method is that (i) just
@@ -366,7 +408,7 @@ namespace Radzen.Blazor
             // implementation could be swapped with a different one without
             // breaking the public API.
             if (item == null) {
-                foreach (var i in this.items) {
+                foreach (var i in this.items.ToList()) {
                     await this.ExpandItem(i);
                 }
             } else {
@@ -389,15 +431,17 @@ namespace Radzen.Blazor
             {
                 var childContent = new RenderFragment(builder =>
                 {
-                    Func<object, string> text = null;
-                    Func<object, bool> checkable = null;
+                    Func<object, string>? text = null;
+                    Func<object, bool>? checkable = null;
                     var children = args.Children;
 
                     foreach (var data in children.Data)
                     {
                         if (text == null)
                         {
-                            text = children.Text ?? Getter<string>(data, children.TextProperty);
+                            text = children.Text
+                                ?? (!string.IsNullOrEmpty(children.TextProperty) ? Getter<string>(data, children.TextProperty) : null)
+                                ?? (_ => string.Empty);
                         }
 
                         if (checkable == null)
@@ -412,13 +456,16 @@ namespace Radzen.Blazor
                     }
                 });
 
-                item.RenderChildContent(childContent);
-
-                if (AllowCheckBoxes && AllowCheckChildren && args.Children.Data != null)
+                if (item != null)
                 {
-                    if (CheckedValues != null)
+                    item.RenderChildContent(childContent);
+                }
+
+                if (AllowCheckBoxes && AllowCheckChildren && args?.Children?.Data != null)
+                {
+                    if (CheckedValues != null && UncheckedValues != null && args?.Children?.Data != null)
                     {
-                        if (CheckedValues.Contains(item.Value))
+                        if (item?.Value != null && CheckedValues.Contains(item.Value))
                         {
                             await SetCheckedValues(CheckedValues.Union(args.Children.Data.Cast<object>().Except(UncheckedValues)));
                         }
@@ -429,13 +476,13 @@ namespace Radzen.Blazor
                     }
                 }
             }
-            else if (item.Data != null)
+            else if (item?.Data != null)
             {
-                if (AllowCheckBoxes && AllowCheckChildren && item.Data != null)
+                if (AllowCheckBoxes && AllowCheckChildren)
                 {
                     if (CheckedValues != null && CheckedValues.Contains(item.Value))
                     {
-                        await SetCheckedValues(CheckedValues.Union(item.Data.Cast<object>().Except(UncheckedValues)));
+                        await SetCheckedValues(CheckedValues.Union(item.Data.Cast<object>().Except(UncheckedValues ?? Enumerable.Empty<object?>())));
                     }
                     else
                     {
@@ -473,7 +520,7 @@ namespace Radzen.Blazor
 
         internal void AddLevel(RadzenTreeLevel level)
         {
-            if (!Levels.Contains(level))
+            if (level != null && Levels != null && !Levels.Contains(level))
             {
                 Levels.Add(level);
                 StateHasChanged();
@@ -483,6 +530,7 @@ namespace Radzen.Blazor
         internal int focusedIndex = -1;
 
         bool preventKeyPress = true;
+        bool stopKeydownPropagation;
         async Task OnKeyPress(KeyboardEventArgs args)
         {
             var key = args.Code != null ? args.Code : args.Key;
@@ -490,26 +538,89 @@ namespace Radzen.Blazor
             if (key == "ArrowUp" || key == "ArrowDown")
             {
                 preventKeyPress = true;
+                stopKeydownPropagation = true;
 
                 focusedIndex = Math.Clamp(focusedIndex + (key == "ArrowUp" ? -1 : 1), 0, CurrentItems.Count - 1);
             }
-            else if (key == "ArrowLeft" || key == "ArrowRight")
+            else if (key == "ArrowRight")
             {
                 preventKeyPress = true;
+                stopKeydownPropagation = true;
 
                 if (focusedIndex >= 0 && focusedIndex < CurrentItems.Count)
                 {
                     var item = CurrentItems[focusedIndex];
 
-                    if (item.ChildContent != null || item.HasChildren)
+                    if (item.IsExpandable)
                     {
-                        await item.ExpandCollapse(key == "ArrowRight");
+                        if (!item.IsExpanded)
+                        {
+                            await item.ExpandCollapse(true);
+                        }
+                        else if (item.items.Count > 0)
+                        {
+                            var childIndex = CurrentItems.IndexOf(item.items[0]);
+
+                            if (childIndex >= 0)
+                            {
+                                focusedIndex = childIndex;
+                            }
+                        }
                     }
                 }
             }
-            else if (key == "Enter" || key == "Space")
+            else if (key == "ArrowLeft")
             {
                 preventKeyPress = true;
+                stopKeydownPropagation = true;
+
+                if (focusedIndex >= 0 && focusedIndex < CurrentItems.Count)
+                {
+                    var item = CurrentItems[focusedIndex];
+
+                    if (item.IsExpandable && item.IsExpanded)
+                    {
+                        await item.ExpandCollapse(false);
+                    }
+                    else if (item.ParentItem != null)
+                    {
+                        var parentIndex = CurrentItems.IndexOf(item.ParentItem);
+
+                        if (parentIndex >= 0)
+                        {
+                            focusedIndex = parentIndex;
+                        }
+                    }
+                }
+            }
+            else if (key == "Home" || key == "End")
+            {
+                preventKeyPress = true;
+                stopKeydownPropagation = true;
+
+                focusedIndex = key == "Home" ? 0 : CurrentItems.Count - 1;
+            }
+            else if (key == "Enter")
+            {
+                preventKeyPress = true;
+                stopKeydownPropagation = true;
+
+                if (focusedIndex >= 0 && focusedIndex < CurrentItems.Count)
+                {
+                    var item = CurrentItems[focusedIndex];
+
+                    await SelectItem(item);
+
+                    if (item.IsExpandable)
+                    {
+                        await item.ExpandCollapse(!item.IsExpanded);
+                    }
+                }
+            }
+            else if (key == "Space")
+            {
+                preventKeyPress = true;
+                stopKeydownPropagation = true;
 
                 if (focusedIndex >= 0 && focusedIndex < CurrentItems.Count)
                 {
@@ -521,15 +632,89 @@ namespace Radzen.Blazor
                     }
                 }
             }
+            else if (args.Key != null && args.Key.Length == 1 && !char.IsControl(args.Key[0]) && !args.CtrlKey && !args.AltKey && !args.MetaKey)
+            {
+                preventKeyPress = true;
+                stopKeydownPropagation = true;
+
+                TypeAhead(args.Key);
+            }
             else
             {
                 preventKeyPress = false;
+                stopKeydownPropagation = false;
+            }
+
+            if (preventKeyPress && JSRuntime != null && focusedIndex >= 0 && focusedIndex < CurrentItems.Count)
+            {
+                try
+                {
+                    await JSRuntime.InvokeVoidAsync("Radzen.scrollIntoViewIfNeededById", CurrentItems[focusedIndex].ElementId);
+                }
+                catch
+                {
+                }
+            }
+        }
+
+        string typeAheadBuffer = string.Empty;
+        DateTime lastTypeAhead = DateTime.MinValue;
+
+        void TypeAhead(string character)
+        {
+            var now = DateTime.UtcNow;
+
+            if ((now - lastTypeAhead).TotalMilliseconds > 500)
+            {
+                typeAheadBuffer = string.Empty;
+            }
+
+            lastTypeAhead = now;
+            typeAheadBuffer += character;
+
+            if (CurrentItems.Count == 0)
+            {
+                return;
+            }
+
+            var start = focusedIndex >= 0 ? focusedIndex : 0;
+
+            var search = typeAheadBuffer;
+
+            if (typeAheadBuffer.Length > 1 && typeAheadBuffer.All(c => c == typeAheadBuffer[0]))
+            {
+                search = typeAheadBuffer[0].ToString();
+            }
+
+            for (var offset = 1; offset <= CurrentItems.Count; offset++)
+            {
+                var index = (start + offset) % CurrentItems.Count;
+                var text = CurrentItems[index].Text;
+
+                if (!string.IsNullOrEmpty(text) && text.StartsWith(search, StringComparison.OrdinalIgnoreCase))
+                {
+                    focusedIndex = index;
+                    break;
+                }
             }
         }
 
         internal bool IsFocused(RadzenTreeItem item)
         {
             return CurrentItems.IndexOf(item) == focusedIndex && focusedIndex != -1;
+        }
+
+        internal string? ActiveDescendantId
+        {
+            get
+            {
+                if (focusedIndex >= 0 && focusedIndex < CurrentItems.Count)
+                {
+                    return CurrentItems[focusedIndex].ElementId;
+                }
+
+                return null;
+            }
         }
 
         internal void InsertInCurrentItems(int index, RadzenTreeItem item)
@@ -553,7 +738,7 @@ namespace Radzen.Blazor
             }
         }
 
-        List<RadzenTreeItem> _currentItems;
+        List<RadzenTreeItem>? _currentItems;
         internal List<RadzenTreeItem> CurrentItems
         {
             get
@@ -569,6 +754,54 @@ namespace Radzen.Blazor
         internal async Task ChangeState()
         {
             await InvokeAsync(StateHasChanged);
+        }
+
+        // Shared by tree items within one render pass.
+        readonly SelectionMembership selection = new();
+
+        internal bool IsValueChecked(object? value) => selection.Contains(CheckedValues, value);
+
+        // Tree items can render independently, so each participating batch ends the memo's lifetime.
+        internal void DiscardCheckedValuesMemo() => selection.Invalidate();
+
+        /// <inheritdoc />
+        protected override bool ShouldRender()
+        {
+            DiscardCheckedValuesMemo();
+            return base.ShouldRender();
+        }
+
+        /// <inheritdoc />
+        protected override void OnParametersSet()
+        {
+            // ShouldRender is skipped for the first render.
+            DiscardCheckedValuesMemo();
+            base.OnParametersSet();
+        }
+
+        /// <inheritdoc />
+        protected override void OnAfterRender(bool firstRender)
+        {
+            DiscardCheckedValuesMemo();
+            base.OnAfterRender(firstRender);
+        }
+
+        /// <inheritdoc />
+        protected override void OnInitialized()
+        {
+            if (focusedIndex == -1)
+            {
+                var selectedIndex = SelectedItem != null ? CurrentItems.IndexOf(SelectedItem) : -1;
+
+                if (selectedIndex < 0 && Value != null)
+                {
+                    selectedIndex = CurrentItems.FindIndex(i => object.Equals(i.Value, Value));
+                }
+
+                focusedIndex = selectedIndex >= 0 ? selectedIndex : 0;
+            }
+
+            base.OnInitialized();
         }
     }
 }

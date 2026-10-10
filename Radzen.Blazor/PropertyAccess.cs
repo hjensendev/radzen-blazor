@@ -1,0 +1,697 @@
+using System;
+using System.Collections.Concurrent;
+using System.Collections.Generic;
+using System.ComponentModel;
+using System.Diagnostics.CodeAnalysis;
+using System.Linq;
+using System.Linq.Expressions;
+using System.Reflection;
+using System.Runtime.CompilerServices;
+using System.Threading;
+
+namespace Radzen;
+
+/// <summary>
+/// Utility class that provides property access based on strings.
+/// </summary>
+public static class PropertyAccess
+{
+    private static readonly ConcurrentDictionary<(Type ItemType, Type ValueType, string PropertyName, Type? TargetType), Delegate> getterCache = new();
+
+    private static readonly ConcurrentDictionary<(Type ItemType, string PropertyName, Type? TargetType), Delegate> nullSafeGetterCache = new();
+
+    /// <summary>
+    /// Creates a function that will return the specified property. The compiled function is cached so repeated calls with the same arguments do not recompile it.
+    /// </summary>
+    /// <typeparam name="TItem">The owner type.</typeparam>
+    /// <typeparam name="TValue">The value type.</typeparam>
+    /// <param name="propertyName">Name of the property to return.</param>
+    /// <param name="type">Type of the object.</param>
+    /// <returns>A function which return the specified property by its name.</returns>
+    [RequiresUnreferencedCode(TrimMessages.ExpressionTreeReflection)]
+    public static Func<TItem, TValue> Getter<TItem, TValue>(string propertyName, Type? type = null)
+    {
+        ArgumentNullException.ThrowIfNull(propertyName);
+
+        return (Func<TItem, TValue>)getterCache.GetOrAdd((typeof(TItem), typeof(TValue), propertyName, type),
+            _ => CreateGetter<TItem, TValue>(propertyName, type));
+    }
+
+    /// <summary>
+    /// Like <see cref="Getter{TItem, TValue}"/> for an <see cref="object"/> value, but a null intermediate along a dotted path yields null rather than the leaf type's default. The compiled function is cached.
+    /// </summary>
+    /// <typeparam name="TItem">The owner type.</typeparam>
+    /// <param name="propertyName">Name of the property to return.</param>
+    /// <param name="type">Type of the object.</param>
+    /// <returns>A function which returns the specified property, or null if an intermediate member is null.</returns>
+    [RequiresUnreferencedCode(TrimMessages.ExpressionTreeReflection)]
+    public static Func<TItem, object> NullSafeGetter<TItem>(string propertyName, Type? type = null)
+    {
+        ArgumentNullException.ThrowIfNull(propertyName);
+
+        return (Func<TItem, object>)nullSafeGetterCache.GetOrAdd((typeof(TItem), propertyName, type),
+            _ => CreateGetter<TItem, object>(propertyName, type, nullToNull: true));
+    }
+
+    [RequiresUnreferencedCode(TrimMessages.ExpressionTreeReflection)]
+    private static Func<TItem, TValue> CreateGetter<TItem, TValue>(string propertyName, Type? type, bool nullToNull = false)
+    {
+        if (propertyName.Contains('[', StringComparison.Ordinal))
+        {
+            var arg0 = Expression.Parameter(typeof(TItem), "x");
+            return Expression.Lambda<Func<TItem, TValue>>(
+                QueryableExtension.GetNestedPropertyExpression(arg0, propertyName, type),
+                arg0
+            ).Compile();
+        }
+
+        var arg = Expression.Parameter(typeof(TItem), "x");
+        Expression body = arg;
+
+        if (type != null)
+        {
+            body = Expression.Convert(body, type);
+        }
+
+        Expression AccessNoInterface(Expression instance, string memberName)
+        {
+            if (instance.Type.IsInterface)
+            {
+                var declaringType =
+                    new[] { instance.Type }
+                        .Concat(instance.Type.GetInterfaces())
+                        .FirstOrDefault(t => t.GetProperty(memberName) != null);
+
+                if (declaringType == null)
+                {
+                    throw new InvalidOperationException($"Member '{memberName}' not found on interface '{instance.Type}'.");
+                }
+
+                return RequireReadable(Expression.Property(instance, declaringType, memberName));
+            }
+
+            try
+            {
+                return RequireReadable(Expression.PropertyOrField(instance, memberName));
+            }
+            catch (AmbiguousMatchException)
+            {
+                var prop = instance.Type.GetProperty(memberName,
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.FlattenHierarchy);
+                if (prop != null)
+                {
+                    return RequireReadable(Expression.Property(instance, prop));
+                }
+
+                var field = instance.Type.GetField(memberName,
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.FlattenHierarchy);
+                if (field != null)
+                {
+                    return Expression.Field(instance, field);
+                }
+
+                throw;
+            }
+        }
+
+        static MemberExpression RequireReadable(MemberExpression access)
+        {
+            if (access.Member is PropertyInfo { CanRead: false } property)
+            {
+                throw new InvalidOperationException(
+                    $"Property '{property.Name}' of type '{property.DeclaringType}' has no getter. " +
+                    "A trimmed application removes getters that no code calls directly, so annotate the type with " +
+                    "[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties)] or preserve it in a linker descriptor.");
+            }
+
+            return access;
+        }
+
+        Expression AccessWithNullPropagation(Expression instance, string memberName)
+        {
+            var underlying = Nullable.GetUnderlyingType(instance.Type);
+            if (underlying != null && memberName is not ("Value" or "HasValue"))
+            {
+                var hasValue = Expression.Property(instance, "HasValue");
+                var value = Expression.Property(instance, "Value");
+
+                var accessed = AccessNoInterface(value, memberName);
+                return Expression.Condition(hasValue, accessed, Expression.Default(accessed.Type));
+            }
+
+            if (!instance.Type.IsValueType)
+            {
+                var notNull = Expression.NotEqual(instance, Expression.Constant(null, instance.Type));
+                var accessed = AccessNoInterface(instance, memberName);
+                return Expression.Condition(notNull, accessed, Expression.Default(accessed.Type));
+            }
+
+            return AccessNoInterface(instance, memberName);
+        }
+
+        // When nullToNull is set, a null intermediate makes the whole result null rather than the leaf type's
+        // default. Each step is stored in a local so a computed or side-effecting member is read exactly once.
+        var locals = new List<ParameterExpression>();
+        var steps = new List<Expression>();
+        Expression? nullGuard = null;
+
+        foreach (var member in propertyName.Split('.'))
+        {
+            var instance = Expression.Variable(body.Type);
+            locals.Add(instance);
+            steps.Add(Expression.Assign(instance, body));
+
+            if (nullToNull && !instance.Type.IsValueType)
+            {
+                var isNull = Expression.Equal(instance, Expression.Constant(null, instance.Type));
+                nullGuard = nullGuard == null ? isNull : Expression.OrElse(nullGuard, isNull);
+                var accessed = AccessNoInterface(instance, member);
+                body = Expression.Condition(isNull, Expression.Default(accessed.Type), accessed);
+            }
+            else if (nullToNull && Nullable.GetUnderlyingType(instance.Type) != null && member != "HasValue")
+            {
+                // A null Nullable<T> yields null. This also guards an explicit ".Value" in the path (which would
+                // otherwise throw); ".HasValue" keeps its boolean semantics and falls through unguarded below.
+                var hasValue = Expression.Property(instance, "HasValue");
+                nullGuard = nullGuard == null ? Expression.Not(hasValue) : Expression.OrElse(nullGuard, Expression.Not(hasValue));
+                var value = Expression.Property(instance, "Value");
+                var accessed = member == "Value" ? (Expression)value : AccessNoInterface(value, member);
+                body = Expression.Condition(hasValue, accessed, Expression.Default(accessed.Type));
+            }
+            else
+            {
+                body = AccessWithNullPropagation(instance, member);
+            }
+        }
+
+        body = Expression.Convert(body, typeof(TValue));
+        if (nullGuard != null)
+        {
+            body = Expression.Condition(nullGuard, Expression.Default(typeof(TValue)), body);
+        }
+
+        steps.Add(body);
+        return Expression.Lambda<Func<TItem, TValue>>(Expression.Block(locals, steps), arg).Compile();
+    }
+
+    /// <summary>
+    /// Determines whether the specified type is a <see cref="DateTime" />.
+    /// </summary>
+    /// <param name="source">The source.</param>
+    /// <returns><c>true</c> if the specified type is a DateTime instance or nullable DateTime; otherwise, <c>false</c>.</returns>
+    public static bool IsDate(Type? source)
+    {
+        if (source == null)
+        {
+            return false;
+        }
+
+        var type = source.IsGenericType ? source.GetGenericArguments()[0] : source;
+
+        if (type == typeof(DateTime) || type == typeof(DateTimeOffset))
+        {
+            return true;
+        }
+        if (type == typeof(DateOnly))
+        {
+            return true;
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// Determines whether the specified type is a DateOnly.
+    /// </summary>
+    /// <param name="source">The source.</param>
+    /// <returns><c>true</c> if the specified type is a DateOnly instance or nullable DateOnly; otherwise, <c>false</c>.</returns>
+    public static bool IsDateOnly(Type? source)
+    {
+        if (source == null)
+        {
+            return false;
+        }
+
+        var type = source.IsGenericType ? source.GetGenericArguments()[0] : source;
+
+        if (type == typeof(DateOnly))
+        {
+            return true;
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// Creates a function that reads a <see cref="DateTime"/>, <see cref="DateTimeOffset"/> or <see cref="DateOnly"/> property, or its nullable,
+    /// as a <see cref="DateTime"/>. A DateOnly is read at midnight and a DateTimeOffset as its clock time, since an expression tree converts neither to DateTime;
+    /// a null nullable throws, as the DateTime getter does.
+    /// </summary>
+    /// <typeparam name="TItem">The owner type.</typeparam>
+    /// <param name="propertyName">Name of the property to return.</param>
+    /// <returns>A function which returns the specified property as a DateTime.</returns>
+    [RequiresUnreferencedCode(TrimMessages.ExpressionTreeReflection)]
+    internal static Func<TItem, DateTime> DateGetter<TItem>(string propertyName)
+    {
+        var type = GetPropertyType(typeof(TItem), propertyName);
+        var underlying = type == null ? null : Nullable.GetUnderlyingType(type) ?? type;
+
+        if (underlying == typeof(DateOnly))
+        {
+            var getter = Getter<TItem, DateOnly?>(propertyName);
+            return item => getter(item)!.Value.ToDateTime(TimeOnly.MinValue);
+        }
+
+        if (underlying == typeof(DateTimeOffset))
+        {
+            var getter = Getter<TItem, DateTimeOffset?>(propertyName);
+            return item => getter(item)!.Value.DateTime;
+        }
+
+        return Getter<TItem, DateTime>(propertyName);
+    }
+
+    /// <summary>
+    /// Converts a DateTime to DateOnly.
+    /// </summary>
+    /// <param name="source">The source DateTime.</param>
+    /// <returns>DateOnly object or null.</returns>
+    public static object? DateOnlyFromDateTime(DateTime source)
+    {
+        object? result = null;
+        result = DateOnly.FromDateTime(source);
+        return result;
+    }
+
+    /// <summary>
+    /// Gets the type of the element of a collection time.
+    /// </summary>
+    /// <param name="type">The type.</param>
+    /// <returns>The type of the collection element.</returns>
+    public static Type GetElementType([DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.Interfaces)] Type type)
+    {
+        ArgumentNullException.ThrowIfNull(type);
+
+        if (type.IsArray)
+        {
+            var elementType = type.GetElementType();
+            return elementType ?? typeof(object);
+        }
+
+        if (type.IsGenericType && type.GetGenericTypeDefinition() == typeof(IEnumerable<>))
+        {
+            return type.GetGenericArguments()[0];
+        }
+
+        var enumType = type.GetInterfaces()
+                                .Where(t => t.IsGenericType &&
+                                       t.GetGenericTypeDefinition() == typeof(IEnumerable<>))
+                                .Select(t => t.GenericTypeArguments[0]).FirstOrDefault();
+        return enumType ?? type;
+    }
+
+    /// <summary>
+    /// Converts the property to a value that can be used by Dynamic LINQ.
+    /// </summary>
+    /// <param name="property">The property.</param>
+    /// <returns>The property string.</returns>
+    public static string GetProperty(string property)
+    {
+        return property;
+    }
+
+    /// <summary>
+    /// Gets the value of the specified expression via reflection.
+    /// </summary>
+    /// <param name="value">The value.</param>
+    /// <param name="path">The path.</param>
+    /// <returns>The value of the specified expression or <paramref name="value"/> if not found.</returns>
+    [RequiresUnreferencedCode(TrimMessages.PropertyAccessReflection)]
+    public static object? GetValue(object? value, string path)
+    {
+        ArgumentNullException.ThrowIfNull(path);
+
+        if (value == null)
+        {
+            return null;
+        }
+
+        Type currentType = value.GetType();
+
+        foreach (string propertyName in path.Split('.'))
+        {
+            var property = currentType.GetProperty(propertyName);
+            if (property != null)
+            {
+                if (value == null)
+                {
+                    return null;
+                }
+
+                value = property.GetValue(value, null);
+                currentType = value?.GetType() ?? property.PropertyType;
+            }
+        }
+        return value;
+    }
+
+    /// <summary>
+    /// Creates a function that returns the specified property.
+    /// </summary>
+    /// <typeparam name="T">The value type</typeparam>
+    /// <param name="data">The value.</param>
+    /// <param name="propertyName">The name of the property to return.</param>
+    /// <returns>A function that returns the specified property.</returns>
+    [RequiresUnreferencedCode(TrimMessages.ExpressionTreeReflection)]
+    public static Func<object, T> Getter<T>(object data, string propertyName)
+    {
+        ArgumentNullException.ThrowIfNull(data);
+        ArgumentNullException.ThrowIfNull(propertyName);
+
+        var type = data.GetType();
+        var arg = Expression.Parameter(typeof(object));
+        var body = Expression.Convert(Expression.Property(Expression.Convert(arg, type), propertyName), typeof(T));
+
+        return Expression.Lambda<Func<object, T>>(body, arg).Compile();
+    }
+
+    static readonly ConditionalWeakTable<Type, ItemGetterCache> itemGetterCaches = new();
+
+    sealed class ItemGetter
+    {
+        internal ItemGetter(Func<object, object?>? get) => Get = get;
+
+        internal Func<object, object?>? Get { get; }
+    }
+
+    sealed class ItemGetterCache
+    {
+        const int MaxEntries = 64;
+
+        readonly ConcurrentDictionary<string, ItemGetter> getters = new();
+        int count;
+
+        [RequiresUnreferencedCode(TrimMessages.ExpressionTreeReflection)]
+        internal ItemGetter GetOrCreate(object item, string property)
+        {
+            if (getters.TryGetValue(property, out var getter))
+            {
+                return getter;
+            }
+
+            var created = Create(item, property);
+
+            if (Interlocked.Increment(ref count) > MaxEntries)
+            {
+                Interlocked.Decrement(ref count);
+                return created;
+            }
+
+            var result = getters.GetOrAdd(property, created);
+
+            if (!ReferenceEquals(result, created))
+            {
+                Interlocked.Decrement(ref count);
+            }
+
+            return result;
+        }
+
+        [RequiresUnreferencedCode(TrimMessages.ExpressionTreeReflection)]
+        static ItemGetter Create(object item, string property)
+        {
+            try
+            {
+                return new ItemGetter(Getter<object?>(item, property));
+            }
+            catch
+            {
+                return new ItemGetter(null);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Reads a simple property through a getter cached by runtime item type and property name.
+    /// </summary>
+    /// <remarks>Each runtime type owns up to 64 entries and is held weakly. Unsupported inputs use reflection.</remarks>
+    [RequiresUnreferencedCode(TrimMessages.PropertyAccessReflection)]
+    internal static object? GetItemProperty(object? item, string? property)
+    {
+        if (item == null || string.IsNullOrEmpty(property) || property.Contains('.', StringComparison.Ordinal)
+            || Convert.GetTypeCode(item) != TypeCode.Object)
+        {
+            return GetItemOrValueFromProperty(item, property ?? string.Empty);
+        }
+
+        var getter = itemGetterCaches.GetValue(item.GetType(), static _ => new ItemGetterCache())
+            .GetOrCreate(item, property).Get;
+
+        return getter != null ? getter(item) : GetItemOrValueFromProperty(item, property);
+    }
+
+    /// <summary>
+    /// Tries to get a property by its name.
+    /// </summary>
+    /// <typeparam name="T">The target type</typeparam>
+    /// <param name="item">The item.</param>
+    /// <param name="property">The property.</param>
+    /// <param name="result">The property value.</param>
+    /// <returns><c>true</c> if successful, <c>false</c> otherwise.</returns>
+    [RequiresUnreferencedCode(TrimMessages.PropertyAccessReflection)]
+    public static bool TryGetItemOrValueFromProperty<T>(object item, string property, out T result)
+    {
+        object? r = item != null ? GetItemOrValueFromProperty(item, property) : null;
+
+        if (r != null)
+        {
+            result = (T)r;
+            return true;
+        }
+        else
+        {
+            result = default(T)!;
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Gets the item or value from property.
+    /// </summary>
+    /// <param name="item">The item.</param>
+    /// <param name="property">The property.</param>
+    /// <returns>System.Object.</returns>
+    [RequiresUnreferencedCode(TrimMessages.PropertyAccessReflection)]
+    public static object? GetItemOrValueFromProperty(object? item, string? property)
+    {
+        if (item == null)
+        {
+            return null;
+        }
+
+        if (Convert.GetTypeCode(item) != TypeCode.Object || string.IsNullOrEmpty(property))
+        {
+            return item;
+        }
+
+        return PropertyAccess.GetValue(item, property);
+    }
+
+    /// <summary>
+    /// Determines whether the specified type is numeric.
+    /// </summary>
+    /// <param name="source">The type.</param>
+    /// <returns><c>true</c> if the specified source is numeric; otherwise, <c>false</c>.</returns>
+    public static bool IsNumeric(Type source)
+    {
+        if (source == null)
+        {
+            return false;
+        }
+
+        var type = source.IsGenericType ? source.GetGenericArguments()[0] : source;
+
+        switch (Type.GetTypeCode(type))
+        {
+            case TypeCode.Byte:
+            case TypeCode.SByte:
+            case TypeCode.UInt16:
+            case TypeCode.UInt32:
+            case TypeCode.UInt64:
+            case TypeCode.Int16:
+            case TypeCode.Int32:
+            case TypeCode.Int64:
+            case TypeCode.Decimal:
+            case TypeCode.Double:
+            case TypeCode.Single:
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    /// <summary>
+    /// Determines whether the specified type is an enum.
+    /// </summary>
+    /// <param name="source">The type.</param>
+    /// <returns><c>true</c> if the specified source is an enum; otherwise, <c>false</c>.</returns>
+    public static bool IsEnum(Type? source)
+    {
+        if (source == null)
+        {
+            return false;
+        }
+
+        return source.IsEnum;
+    }
+
+    /// <summary>
+    /// Determines whether the specified type is a Nullable enum.
+    /// </summary>
+    /// <param name="source">The type.</param>
+    /// <returns><c>true</c> if the specified source is an enum; otherwise, <c>false</c>.</returns>
+    public static bool IsNullableEnum(Type? source)
+    {
+        if (source == null)
+        {
+            return false;
+        }
+
+        Type? u = Nullable.GetUnderlyingType(source);
+        return (u != null) && u.IsEnum;
+    }
+
+    /// <summary>
+    /// Determines whether the specified type is anonymous.
+    /// </summary>
+    /// <param name="type">The type.</param>
+    /// <returns><c>true</c> if the specified type is anonymous; otherwise, <c>false</c>.</returns>
+    [RequiresUnreferencedCode(TrimMessages.CustomAttributeReflection)]
+    public static bool IsAnonymous(this Type type)
+    {
+        ArgumentNullException.ThrowIfNull(type);
+
+        if (type.IsGenericType)
+        {
+            var d = type.GetGenericTypeDefinition();
+            if (d.IsClass && d.IsSealed && d.Attributes.HasFlag(System.Reflection.TypeAttributes.NotPublic))
+            {
+                var attributes = d.GetCustomAttributes(typeof(System.Runtime.CompilerServices.CompilerGeneratedAttribute), false);
+                if (attributes != null && attributes.Length > 0)
+                {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// Method to only replace first occurence of a substring in a string
+    /// </summary>
+    /// <param name="text">The text to search in.</param>
+    /// <param name="search">The string to search for.</param>
+    /// <param name="replace">The replacement string.</param>
+    /// <returns>The modified string.</returns>
+    public static string ReplaceFirst(this string text, string search, string replace)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+        ArgumentNullException.ThrowIfNull(search);
+
+        int pos = text.IndexOf(search, StringComparison.Ordinal);
+        if (pos < 0)
+        {
+            return text;
+        }
+        return text.Substring(0, pos) + replace + text.Substring(pos + search.Length);
+    }
+
+    /// <summary>
+    /// Gets the type of the property.
+    /// </summary>
+    /// <param name="type">The type.</param>
+    /// <param name="property">The property.</param>
+    /// <returns>Type.</returns>
+    [RequiresUnreferencedCode(TrimMessages.PropertyAccessReflection)]
+    public static Type? GetPropertyType([DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties)] Type type, string property)
+    {
+        ArgumentNullException.ThrowIfNull(type);
+        ArgumentNullException.ThrowIfNull(property);
+
+        if (property.Contains('.', StringComparison.Ordinal))
+        {
+            var part = property.Split('.').FirstOrDefault();
+            var propertyType = GetPropertyTypeIncludeInterface(type, part);
+            if (propertyType == null)
+            {
+                return null;
+            }
+
+            return GetPropertyType(propertyType, property.ReplaceFirst($"{part}.", ""));
+        }
+
+        return GetPropertyTypeIncludeInterface(type, property);
+    }
+
+    [RequiresUnreferencedCode(TrimMessages.PropertyAccessReflection)]
+    private static Type? GetPropertyTypeIncludeInterface([DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties)] Type? type, string? property)
+    {
+        if (type != null)
+        {
+            return !type.IsInterface ?
+                (Nullable.GetUnderlyingType(type) ?? type).GetProperty(property ?? "")?.PropertyType :
+                    new Type[] { type }
+                    .Concat(type.GetInterfaces())
+                    .FirstOrDefault(t => t.GetProperty(property ?? "") != null)?
+                    .GetProperty(property ?? "")?.PropertyType;
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Gets the property by its name. If the type is an interface, it will search through all interfaces implemented by the type.
+    /// </summary>
+    /// <param name="type">The type.</param>
+    /// <param name="property">The property.</param>
+    /// <returns>PropertyInfo.</returns>
+    [RequiresUnreferencedCode(TrimMessages.PropertyAccessReflection)]
+    public static PropertyInfo? GetProperty([DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties)] Type type, string property)
+    {
+        ArgumentNullException.ThrowIfNull(type);
+        ArgumentNullException.ThrowIfNull(property);
+
+        if (type.IsInterface)
+        {
+            var interfaces = type.GetInterfaces();
+
+            foreach (var @interface in interfaces)
+            {
+                var propertyInfo = @interface.GetProperty(property);
+
+                if (propertyInfo != null)
+                {
+                    return propertyInfo;
+                }
+            }
+        }
+
+        return type.GetProperty(property);
+    }
+
+    /// <summary>
+    /// Gets the dynamic property expression when binding to IDictionary.
+    /// </summary>
+    /// <param name="name">The property name.</param>
+    /// <param name="type">The property type.</param>
+    /// <returns>Dynamic property expression.</returns>
+    public static string GetDynamicPropertyExpression(string name, Type type)
+    {
+        ArgumentNullException.ThrowIfNull(name);
+        ArgumentNullException.ThrowIfNull(type);
+
+        var isEnum = type.IsEnum || Nullable.GetUnderlyingType(type)?.IsEnum == true;
+        var typeName = isEnum ? "Enum" : (Nullable.GetUnderlyingType(type) ?? type).Name;
+        var typeFunc = $@"{typeName}{(!isEnum && Nullable.GetUnderlyingType(type) != null ? "?" : "")}";
+
+        return $@"({typeFunc})it[""{name}""]";
+    }
+}

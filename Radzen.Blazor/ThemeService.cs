@@ -1,6 +1,10 @@
+using Microsoft.AspNetCore.Components;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.JSInterop;
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 
 namespace Radzen
@@ -13,7 +17,7 @@ namespace Radzen
         /// <summary>
         /// Specifies the theme.
         /// </summary>
-        public string Theme { get; set; }
+        public string? Theme { get; set; }
         /// <summary>
         /// Specifies if the theme colors should meet WCAG contrast requirements.
         /// </summary>
@@ -31,68 +35,77 @@ namespace Radzen
     /// <summary>
     /// Theme definition.
     /// </summary>
+    [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties)]
     public class Theme
     {
         /// <summary>
+        /// Initializes a new instance of the <see cref="Theme"/> class.
+        /// </summary>
+        [DynamicDependency(DynamicallyAccessedMemberTypes.All, typeof(Theme))]
+        public Theme()
+        {
+        }
+
+        /// <summary>
         /// Specifies the user-friendly theme name e.g. Material3.
         /// </summary>
-        public string Text { get; set; }
+        public string? Text { get; set; }
         /// <summary>
         /// Specifies the theme value e.g. material3.
         /// </summary>
-        public string Value { get; set; }
+        public string? Value { get; set; }
         /// <summary>
         /// Specifies the primary color.
         /// </summary>
-        public string Primary { get; set; }
+        public string? Primary { get; set; }
         /// <summary>
         /// Specifies the secondary color.
         /// </summary>
-        public string Secondary { get; set; }
+        public string? Secondary { get; set; }
         /// <summary>
         /// Specifies the base color.
         /// </summary>
-        public string Base { get; set; }
+        public string? Base { get; set; }
         /// <summary>
         /// Specifies the content color.
         /// </summary>
-        public string Content { get; set; }
+        public string? Content { get; set; }
         /// <summary>
         /// Specifies the title text color.
         /// </summary>
-        public string TitleText { get; set; }
+        public string? TitleText { get; set; }
         /// <summary>
         /// Specifies the content text color.
         /// </summary>
-        public string ContentText { get; set; }
+        public string? ContentText { get; set; }
         /// <summary>
         /// Specifies the selection color.
         /// </summary>
-        public string Selection { get; set; }
+        public string? Selection { get; set; }
         /// <summary>
         /// Specifies the selection text color.
         /// </summary>
-        public string SelectionText { get; set; }
+        public string? SelectionText { get; set; }
         /// <summary>
         /// Specifies the button radius.
         /// </summary>
-        public string ButtonRadius { get; set; }
+        public string? ButtonRadius { get; set; }
         /// <summary>
         /// Specifies the card radius.
         /// </summary>
-        public string CardRadius { get; set; }
+        public string? CardRadius { get; set; }
         /// <summary>
         /// Specifies the series A color.
         /// </summary>
-        public string SeriesA { get; set; }
+        public string? SeriesA { get; set; }
         /// <summary>
         /// Specifies the series B color.
         /// </summary>
-        public string SeriesB { get; set; }
+        public string? SeriesB { get; set; }
         /// <summary>
         /// Specifies the series C color.
         /// </summary>
-        public string SeriesC { get; set; }
+        public string? SeriesC { get; set; }
         /// <summary>
         /// Specifies if the theme is premium.
         /// </summary>
@@ -143,6 +156,78 @@ namespace Radzen
                 SeriesA = "#3d71b8",
                 SeriesB = "#663db8",
                 SeriesC = "#b83dae"
+            },
+            new Theme {
+                Text = "Material 3 Expressive",
+                Value = "material3expressive",
+                Premium = true,
+                Primary = "#5f33d6",
+                Secondary = "#573d8f",
+                Base = "#ffffff",
+                Selection = "rgba(69, 0, 255, 0.13)",
+                SelectionText = "#21005d",
+                Content = "#f9f8fc",
+                TitleText = "#1c1b20",
+                ContentText = "#77747e",
+                ButtonRadius = "4",
+                CardRadius = "8",
+                SeriesA = "#9675f0",
+                SeriesB = "#f075ed",
+                SeriesC = "#f07591"
+            },
+            new Theme {
+                Text = "Material 3 Expressive Dark",
+                Value = "material3expressive-dark",
+                Premium = true,
+                Primary = "#cdbcff",
+                Secondary = "#c8b9e5",
+                Base = "#141218",
+                Selection = "rgba(205, 188, 255, 0.24)",
+                SelectionText = "#c8b9e5",
+                Content = "#1c1b20",
+                TitleText = "#e2e0e9",
+                ContentText = "#e2e0e9",
+                ButtonRadius = "4",
+                CardRadius = "8",
+                SeriesA = "#5c3db8",
+                SeriesB = "#b83db7",
+                SeriesC = "#b83d5b"
+            },
+            new Theme {
+                Text = "Zen",
+                Value = "zen",
+                Premium = true,
+                Primary = "#1a1a1a",
+                Secondary = "#6b6b6b",
+                Base = "#f5f5f5",
+                Selection = "rgba(107, 107, 107, 0.12)",
+                SelectionText = "#262626",
+                Content = "#ffffff",
+                TitleText = "#1a1a1a",
+                ContentText = "#666666",
+                ButtonRadius = "3",
+                CardRadius = "8",
+                SeriesA = "#5b8ff0",
+                SeriesB = "#56c1ea",
+                SeriesC = "#a97bf0"
+            },
+            new Theme {
+                Text = "Zen Dark",
+                Value = "zen-dark",
+                Premium = true,
+                Primary = "#f2f2f2",
+                Secondary = "#9e9e9e",
+                Base = "#181818",
+                Selection = "rgba(158, 158, 158, 0.24)",
+                SelectionText = "#e6e6e6",
+                Content = "#242424",
+                TitleText = "#e6e6e6",
+                ContentText = "#c4c4c4",
+                ButtonRadius = "3",
+                CardRadius = "8",
+                SeriesA = "#5b8ff0",
+                SeriesB = "#3cc4e8",
+                SeriesC = "#b07cf2"
             },
             new Theme {
                 Text = "Fluent",
@@ -366,12 +451,33 @@ namespace Radzen
     /// <summary>
     /// Service for theme registration and management.
     /// </summary>
-    public class ThemeService
+    [method: DynamicDependency(DynamicallyAccessedMemberTypes.All, typeof(Blazor.RadzenTheme))]
+    public class ThemeService(IJSRuntime jsRuntime, IServiceProvider serviceProvider)
     {
+
+        private string? theme;
         /// <summary>
         /// Gets the current theme.
         /// </summary>
-        public string Theme { get; private set; }
+        public string? Theme
+        {
+            [UnconditionalSuppressMessage(TrimMessages.Trimming, TrimMessages.IL2026, Justification = TrimMessages.ThemeTypePreserved)]
+            get
+            {
+                if (theme == null)
+                {
+                    var persistentComponentState = serviceProvider.GetService<PersistentComponentState>();
+
+                    if (persistentComponentState?.TryTakeFromJson(nameof(Theme), out string? persistedTheme) == true && persistedTheme != null)
+                    {
+                        theme = persistedTheme;
+                    }
+                }
+                return theme;
+            }
+
+            private set => theme = value;
+        }
 
         /// <summary>
         /// Specify if the theme colors should meet WCAG contrast requirements.
@@ -384,9 +490,14 @@ namespace Radzen
         public bool? RightToLeft { get; private set; }
 
         /// <summary>
+        /// Custom css path. If set, it overwrites the default path.
+        /// </summary>
+        public string? CssPath { get; private set; }
+
+        /// <summary>
         /// Raised when the theme changes.
         /// </summary>
-        public event Action ThemeChanged;
+        public event Action? ThemeChanged;
 
         /// <summary>
         /// Changes the current theme.
@@ -407,6 +518,8 @@ namespace Radzen
         /// </summary>
         public void SetTheme(ThemeOptions options)
         {
+            ArgumentNullException.ThrowIfNull(options);
+
             var requiresChange = false;
 
             if (Theme != options.Theme)
@@ -430,8 +543,46 @@ namespace Radzen
             if (requiresChange && options.TriggerChange)
             {
                 ThemeChanged?.Invoke();
+
+                try
+                {
+                    if (Href != null)
+                    {
+                        jsRuntime.InvokeVoid("Radzen.setTheme", Href, Wcag == true ? WcagHref : null!);
+                    }
+                }
+                catch (Exception)
+                {
+                }
             }
         }
+        [UnconditionalSuppressMessage(TrimMessages.Trimming, TrimMessages.IL2026, Justification = TrimMessages.AssemblyMetadataPreserved)]
+        private static readonly string? Version = typeof(ThemeService).Assembly.GetName().Version?.ToString();
+
+        internal string Href => $"{Path}/{Theme}-base.css?v={Version}";
+
+        internal string WcagHref => $"{Path}/{Theme}-wcag.css?v={Version}";
+
+        private string Path => Embedded
+            ? $"_content/Radzen.Blazor/css"
+            : !string.IsNullOrEmpty(CssPath)
+                ? CssPath
+                : "css";
+
+        internal bool Embedded => Theme switch
+        {
+            "material" => true,
+            "material-dark" => true,
+            "standard" => true,
+            "standard-dark" => true,
+            "humanistic" => true,
+            "humanistic-dark" => true,
+            "software" => true,
+            "software-dark" => true,
+            "default" => true,
+            "dark" => true,
+            _ => false
+        };
 
         /// <summary>
         /// Enables or disables WCAG contrast requirements.
@@ -459,6 +610,15 @@ namespace Radzen
                 RightToLeft = rightToLeft,
                 TriggerChange = true
             });
+        }
+
+        /// <summary>
+        /// Sets a specific css path to the theme service.
+        /// </summary>
+        /// <param name="cssPath">New css path to look for themes.</param>
+        public void SetCssPath(string? cssPath)
+        {
+            CssPath = cssPath;
         }
     }
 }

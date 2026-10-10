@@ -1,3 +1,4 @@
+@use 'sass:map';
 $grid-data-border-shadow: none !default;
 $grid-cell-border: var(--rz-border-normal) !default;
 $grid-right-cell-border: $grid-cell-border !default;
@@ -57,6 +58,8 @@ $grid-header-filter-icon-margin-inline: auto 0.5rem !default;
 $grid-header-filter-icon-hover-color: var(--rz-text-color) !default;
 $grid-header-filter-icon-active-color: var(--rz-primary) !default;
 $grid-header-filter-icon-font-size: 1rem !default;
+$grid-simple-filter-icon-active-color: var(--rz-on-secondary-lighter) !default;
+$grid-simple-filter-icon-active-background-color: var(--rz-secondary-lighter) !default;
 $grid-border: var(--rz-border-normal) !default;
 $grid-border-radius: 0 !default;
 $grid-sort-icon-width: 1rem !default;
@@ -76,9 +79,12 @@ $grid-detail-template-border-radius: 0 !default;
 $grid-detail-template-padding: 0 !default;
 $grid-detail-template-background-color: var(--rz-base-background-color) !default;
 $grid-loading-indicator-color: currentColor !default;
-$grid-loading-indicator-background-color: rgba(var(--rz-base-600), 0.5) !default;
+$grid-loading-indicator-background-color: var(--rz-base-600) !default;
+$grid-loading-indicator-background-opacity: 0.5 !default;
 $grid-frozen-cell-border: $grid-cell-border !default;
 $grid-frozen-cell-background-color: $grid-header-background-color !default;
+$grid-frozen-stripe-background-color: var(--rz-grid-stripe-background-color) !default;
+$grid-frozen-stripe-odd-background-color: var(--rz-grid-stripe-odd-background-color) !default;
 $grid-state-transition: var(--rz-transition-all) !default;
 $grid-group-header-padding: 0.5rem !default;
 $grid-group-header-gap: 0.5rem !default;
@@ -102,10 +108,12 @@ $column-draggable-shadow: 0 8px 10px 0 rgba(0, 0, 0, 0.1) !default;
   background-color: var(--rz-grid-background-color);
   overflow: hidden;
 
-  &:focus {
+  &:focus,
+  &:has(> .rz-data-grid-data:focus) {
     outline: var(--rz-outline-normal);
   }
-  &:focus-visible {
+  &:focus-visible,
+  &:has(> .rz-data-grid-data:focus-visible) {
     outline: var(--rz-grid-focus-outline);
     outline-offset: var(--rz-grid-focus-outline-offset);
   }
@@ -229,8 +237,14 @@ $column-draggable-shadow: 0 8px 10px 0 rgba(0, 0, 0, 0.1) !default;
 }
 
 .rz-grid-table thead {
+  position: sticky;
+  top: 0;
+  z-index: 2;
 
   th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
     background-color: var(--rz-grid-header-background-color);
     padding: 0;
     white-space: nowrap;
@@ -416,11 +430,17 @@ $column-draggable-shadow: 0 8px 10px 0 rgba(0, 0, 0, 0.1) !default;
         > td {
             background-color: var(--rz-grid-stripe-background-color);
         }
+        > td.rz-frozen-cell {
+            background-color: var(--rz-grid-frozen-stripe-background-color);
+        }
       }
 
       &:nth-child(odd) {
         > td {
           background-color: var(--rz-grid-stripe-odd-background-color);
+        }
+        > td.rz-frozen-cell {
+            background-color: var(--rz-grid-frozen-stripe-odd-background-color);
         }
       }
     }
@@ -654,48 +674,14 @@ $column-draggable-shadow: 0 8px 10px 0 rgba(0, 0, 0, 0.1) !default;
 .rz-selectable {
   tbody {
     tr.rz-data-row {
-      td,
-      .rz-cell-data {
-        transition: background-color var(--rz-transition), color var(--rz-transition);
-
-        &.rz-frozen-cell {
-          &:before,
-          &:after {
-            content: "";
-            position: absolute;
-            inset: 0;
-            transition: background-color var(--rz-transition), color var(--rz-transition);
-          }
-        }
-
-        &.rz-frozen-cell-left,
-        &.rz-frozen-cell-left-inner {
-          &:before {
-            z-index: -1;
-          }
-
-          &:after {
-            z-index: -2;
-            background-color: var(--rz-grid-frozen-cell-background-color);
-          }
-        }
-
-        &.rz-frozen-cell-right,
-        &.rz-frozen-cell-right-inner {
-          &:before {
-            z-index: -2;
-            background-color: var(--rz-grid-frozen-cell-background-color);
-          }
-
-          &:after {
-            z-index: -1;
-          }
-        }
-      }
 
       &.rz-state-highlight {
         > td {
           background-color: var(--rz-grid-selected-background-color);
+        }
+
+        > td.rz-frozen-cell {
+          background-color: var(--rz-grid-background-color);
 
           &.rz-frozen-cell-left,
           &.rz-frozen-cell-left-inner {
@@ -721,10 +707,95 @@ $column-draggable-shadow: 0 8px 10px 0 rgba(0, 0, 0, 0.1) !default;
         }
       }
 
+      &.rz-state-disabled {
+        opacity: 0.5;
+        pointer-events: none;
+      }
+
+      &:hover {
+        &:not(.rz-state-highlight) {
+          > td {
+            background-color: var(--rz-grid-hover-background-color);
+          }
+
+          > td.rz-frozen-cell {
+            background-color: var(--rz-grid-background-color);
+
+            &.rz-frozen-cell-left,
+            &.rz-frozen-cell-left-inner {
+              &:before {
+                background-color: var(--rz-grid-hover-background-color);
+              }
+            }
+
+            &.rz-frozen-cell-right,
+            &.rz-frozen-cell-right-inner {
+              &:after {
+                background-color: var(--rz-grid-hover-background-color);
+              }
+            }
+          }
+
+          .rz-cell-data {
+            color: var(--rz-grid-hover-color);
+          }
+        }
+      }
+    }
+  }
+}
+
+// Keyboard focus is not selection, so it is not scoped to .rz-selectable, which a grid carries only
+// when a selection delegate is wired. Placed directly after that block so a focused row still wins
+// over a selected one at equal specificity, as it did when these rules lived inside it.
+.rz-grid-table {
+  tbody {
+    tr.rz-data-row {
+      td,
+      .rz-cell-data {
+        transition: background-color var(--rz-transition), color var(--rz-transition);
+
+        &.rz-frozen-cell {
+          &:before,
+          &:after {
+            content: "";
+            position: absolute;
+            inset: 0;
+            transition: background-color var(--rz-transition), color var(--rz-transition);
+          }
+        }
+
+        &.rz-frozen-cell-left,
+        &.rz-frozen-cell-left-inner {
+          &:before {
+            z-index: -1;
+          }
+
+          &:after {
+            z-index: -2;
+          }
+        }
+
+        &.rz-frozen-cell-right,
+        &.rz-frozen-cell-right-inner {
+          &:before {
+            z-index: -2;
+          }
+
+          &:after {
+            z-index: -1;
+          }
+        }
+      }
+
       &.rz-state-focused {
         > td {
           background-color: var(--rz-grid-cell-focus-background-color);
           color: var(--rz-grid-cell-focus-color);
+        }
+
+        > td.rz-frozen-cell {
+          background-color: var(--rz-grid-background-color);
 
           &.rz-frozen-cell-left,
           &.rz-frozen-cell-left-inner {
@@ -756,35 +827,11 @@ $column-draggable-shadow: 0 8px 10px 0 rgba(0, 0, 0, 0.1) !default;
         }
       }
 
-      &.rz-state-disabled {
-        opacity: 0.5;
-        pointer-events: none;
-      }
-
-      &:hover {
-        &:not(.rz-state-highlight) {
-          > td {
-            background-color: var(--rz-grid-hover-background-color);
-
-            &.rz-frozen-cell-left,
-            &.rz-frozen-cell-left-inner {
-              &:before {
-                background-color: var(--rz-grid-hover-background-color);
-              }
-            }
-
-            &.rz-frozen-cell-right,
-            &.rz-frozen-cell-right-inner {
-              &:after {
-                background-color: var(--rz-grid-hover-background-color);
-              }
-            }
-          }
-
-          .rz-cell-data {
-            color: var(--rz-grid-hover-color);
-          }
-        }
+      // The focused *cell*, which the row background cannot show: RadzenDataGrid moves this class
+      // across the cells of a row on ArrowLeft/ArrowRight, and until now nothing drew it.
+      > td.rz-state-focused {
+        outline: var(--rz-grid-cell-focus-outline);
+        outline-offset: var(--rz-grid-cell-focus-outline-offset);
       }
     }
   }
@@ -817,7 +864,7 @@ $column-draggable-shadow: 0 8px 10px 0 rgba(0, 0, 0, 0.1) !default;
         inset-inline-start: calc(var(--rz-border-width) + 1px);
         height: calc(var(--rz-input-height) - var(--rz-border-width) * 2 - 2px);
         max-height: calc(var(--rz-input-height) - var(--rz-border-width) * 2 - 2px);
-        line-height: calc(map-get($button-sizes, md, line-height) - var(--rz-border-width) * 2 - 2px);
+        line-height: calc(map.get($button-sizes, md, line-height) - var(--rz-border-width) * 2 - 2px);
         border-radius: calc(var(--rz-input-border-radius) - var(--rz-border-width) - 1px);
       }
 
@@ -825,7 +872,7 @@ $column-draggable-shadow: 0 8px 10px 0 rgba(0, 0, 0, 0.1) !default;
         inset-inline-start: calc(var(--rz-border-width));
         height: calc(var(--rz-input-height) - var(--rz-border-width) * 2);
         max-height: calc(var(--rz-input-height) - var(--rz-border-width) * 2);
-        line-height: calc(map-get($button-sizes, md, line-height) - var(--rz-border-width) * 2);
+        line-height: calc(map.get($button-sizes, md, line-height) - var(--rz-border-width) * 2);
         border-start-start-radius: calc(var(--rz-input-border-radius) - var(--rz-border-width));
         border-start-end-radius: 0;
         border-end-start-radius: calc(var(--rz-input-border-radius) - var(--rz-border-width));
@@ -836,12 +883,12 @@ $column-draggable-shadow: 0 8px 10px 0 rgba(0, 0, 0, 0.1) !default;
     &:has(.rz-filter-button) {
       .rz-cell-filter-label {
         position: relative;
-        min-width: calc(2 * map-get($button-sizes, md, min-width));
+        min-width: calc(2 * map.get($button-sizes, md, min-width));
       }
-      
+
       .rz-textbox,
       .rz-inputtext {
-        text-indent: map-get($button-sizes, md, min-width);
+        text-indent: map.get($button-sizes, md, min-width);
       }
     }
   }
@@ -890,7 +937,8 @@ $column-draggable-shadow: 0 8px 10px 0 rgba(0, 0, 0, 0.1) !default;
   position: absolute;
   inset: 0;
   background-color: var(--rz-grid-loading-indicator-background-color);
-  z-index: 2;
+  opacity: var(--rz-grid-loading-indicator-background-opacity);
+  z-index: 3;
 }
 
 .rz-datatable-loading-content {
@@ -899,7 +947,7 @@ $column-draggable-shadow: 0 8px 10px 0 rgba(0, 0, 0, 0.1) !default;
   top: 50%;
   transform: translate(-50%, -50%);
   color: var(--rz-grid-loading-indicator-color);
-  z-index: 2;
+  z-index: 3;
 
   .rzi-circle-o-notch {
     @extend %rzi;
@@ -1022,7 +1070,7 @@ $column-draggable-shadow: 0 8px 10px 0 rgba(0, 0, 0, 0.1) !default;
       box-shadow: var(--rz-grid-clear-filter-button-shadow);
       padding-inline: var(--rz-grid-filter-button-padding-inline);
     }
-  
+
     &.rz-apply-filter {
       background-color: var(--rz-grid-apply-filter-button-background-color);
       color: var(--rz-grid-apply-filter-button-color);
@@ -1033,6 +1081,9 @@ $column-draggable-shadow: 0 8px 10px 0 rgba(0, 0, 0, 0.1) !default;
 }
 
 .rz-grid-filter-icon {
+  background: none;
+  border: none;
+  padding: 0;
   justify-self: flex-end;
   color: var(--rz-grid-filter-color);
   margin-inline: var(--rz-grid-header-filter-icon-margin-inline);
@@ -1045,9 +1096,14 @@ $column-draggable-shadow: 0 8px 10px 0 rgba(0, 0, 0, 0.1) !default;
   }
 }
 
-.rz-grid-filter-active {
+.rzi.rz-grid-filter-active {
   color: var(--rz-grid-header-filter-icon-active-color) !important;
   --rz-icon-fill: 1;
+}
+
+.rz-button.rz-grid-filter-active {
+  color: var(--rz-grid-simple-filter-icon-active-color) !important;
+  background-color: var(--rz-grid-simple-filter-icon-active-background-color) !important;
 }
 
 .rz-data-grid {
@@ -1065,18 +1121,6 @@ $column-draggable-shadow: 0 8px 10px 0 rgba(0, 0, 0, 0.1) !default;
 
 .rz-grid-table td, .rz-grid-table th {
   padding: var(--rz-grid-cell-padding);
-}
-
-.rz-grid-table thead {
-  position: sticky;
-  top: 0;
-  z-index: 2;
-
-  th {
-    position: sticky;
-    top: 0;
-    z-index: 1;
-  }
 }
 
 .rz-grid-table-fixed {
@@ -1123,7 +1167,7 @@ $column-draggable-shadow: 0 8px 10px 0 rgba(0, 0, 0, 0.1) !default;
 .rz-grid-table tfoot, .rz-grid-table tfoot td {
   position: sticky;
   bottom: 0;
-  z-index: 1;
+  z-index: 2;
 }
 
 .rz-grid-table {
@@ -1243,6 +1287,10 @@ $column-draggable-shadow: 0 8px 10px 0 rgba(0, 0, 0, 0.1) !default;
     display: flex;
     align-items: center;
     text-decoration: none;
+    background: none;
+    border: none;
+    padding: 0;
+    cursor: pointer;
   }
 }
 
@@ -1265,6 +1313,23 @@ $column-draggable-shadow: 0 8px 10px 0 rgba(0, 0, 0, 0.1) !default;
 .rz-filter-menu-symbol {
   width: 1.75rem;
   display: inline-block;
+}
+
+.rz-filter-menu-item {
+  width: 100%;
+  text-align: start;
+  background: none;
+  border: none;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+.rz-cell-filter-clear {
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
 }
 
 .rz-filter-button {

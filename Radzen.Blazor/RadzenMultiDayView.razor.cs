@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Components;
 using Radzen.Blazor.Rendering;
 using System;
+using System.Globalization;
 
 namespace Radzen.Blazor
 {
@@ -19,7 +20,8 @@ namespace Radzen.Blazor
 
         /// <inheritdoc />
         [Parameter]
-        public override string Text { get; set; } = "Multi-Day";
+        public override string Text { get => text ?? Localize(nameof(RadzenStrings.MultiDayView_Text)); set => text = value; }
+        private string? text;
 
         /// <summary>
         /// Gets or sets the time format.
@@ -57,6 +59,27 @@ namespace Radzen.Blazor
         public int MinutesPerSlot { get; set; } = 30;
 
         /// <summary>
+        /// Gets or sets a value indicating whether a dedicated all-day row is displayed when the view groups appointments by resource.
+        /// All-day appointments are displayed in it instead of the time grid. Set to <c>true</c> by default.
+        /// </summary>
+        /// <value><c>true</c> if the all-day row is visible; otherwise, <c>false</c>.</value>
+        [Parameter]
+        public bool ShowAllDay { get; set; } = true;
+
+        private string? allDayText;
+
+        /// <summary>
+        /// Gets or sets the text displayed in the header of the all-day row when the view groups appointments by resource. Set to <c>All day</c> by default.
+        /// </summary>
+        /// <value>The all-day text.</value>
+        [Parameter]
+        public string AllDayText
+        {
+            get => allDayText ?? Localize(nameof(RadzenStrings.Scheduler_AllDayText));
+            set => allDayText = value;
+        }
+
+        /// <summary>
         /// Gets or sets number of days to view. Set to <c>2</c> by default.
         /// </summary>
         /// <value>The number of days.</value>
@@ -74,7 +97,7 @@ namespace Radzen.Blazor
         {
             get
             {
-                return Scheduler.CurrentDate.Date;
+                return Scheduler?.CurrentDate.Date ?? DateTime.Today;
             }
         }
 
@@ -92,14 +115,12 @@ namespace Radzen.Blazor
         {
             get
             {
-                if (StartDate == EndDate.AddDays(-1))
-                {
-                    return $"{StartDate.ToString(Scheduler.Culture.DateTimeFormat.ShortDatePattern)}";
-                }
-                else
-                {
-                    return $"{StartDate.ToString(Scheduler.Culture.DateTimeFormat.ShortDatePattern)} - {EndDate.AddDays(-1).ToString(Scheduler.Culture.DateTimeFormat.ShortDatePattern)}";
-                }
+                var culture = Scheduler?.Culture ?? System.Globalization.CultureInfo.CurrentCulture;
+                var end = EndDate.AddDays(-1);
+                var title = StartDate == end
+                    ? $"{StartDate.ToString(culture.DateTimeFormat.ShortDatePattern, culture)}"
+                    : $"{StartDate.ToString(culture.DateTimeFormat.ShortDatePattern, culture)} - {end.ToString(culture.DateTimeFormat.ShortDatePattern, culture)}";
+                return FormatTitle(StartDate, end, title);
             }
         }
 
@@ -107,13 +128,13 @@ namespace Radzen.Blazor
         /// <inheritdoc />
         public override DateTime Next()
         {
-            return Scheduler.CurrentDate.Date.AddDays(AdvanceDays);
+            return Scheduler?.CurrentDate.Date.AddDays(AdvanceDays) ?? DateTime.Today.AddDays(AdvanceDays);
         }
 
         /// <inheritdoc />
         public override DateTime Prev()
         {
-            return Scheduler.CurrentDate.Date.AddDays(-AdvanceDays);
+            return Scheduler?.CurrentDate.Date.AddDays(-AdvanceDays) ?? DateTime.Today.AddDays(-AdvanceDays);
         }
     }
 }

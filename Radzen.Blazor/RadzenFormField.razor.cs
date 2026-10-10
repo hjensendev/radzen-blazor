@@ -1,5 +1,6 @@
 using Radzen.Blazor.Rendering;
 using Microsoft.AspNetCore.Components;
+using Microsoft.JSInterop;
 using System;
 using System.Threading.Tasks;
 
@@ -28,7 +29,7 @@ namespace Radzen.Blazor
         /// <summary>
         /// Notifies the form field that the disabled state of the component has changed.
         /// </summary>
-        public Action<bool> DisabledChanged { get; set; }
+        public Action<bool> DisabledChanged { get; set; } = null!;
         /// <summary>
         /// Gets or sets a value indicating whether the label is floating or fixed on top.
         /// </summary>
@@ -36,82 +37,162 @@ namespace Radzen.Blazor
     }
 
     /// <summary>
-    /// A Blazor component that wraps another component and adds a label, helper text, start and end content.
+    /// A form field container component that wraps input components with labels, icons, helper text, and validation messages.
+    /// RadzenFormField provides a Material Design-style field layout with floating labels and consistent spacing.
+    /// Enhances form inputs by adding structure, labels, and supplementary content in a cohesive layout.
+    /// Features top-aligned or floating labels via Text property, Start/End content for icons or buttons before/after the input (e.g., search icon, clear button),
+    /// helper text for explanatory text or validation messages below the input, Filled/Outlined/Flat variants matching Material Design,
+    /// floating labels that animate upward when input is focused or has value, and automatic display of validation messages when used with validators.
+    /// Compatible with RadzenTextBox, RadzenTextArea, RadzenPassword, RadzenDropDown, RadzenNumeric, RadzenDatePicker, and similar input components.
+    /// Use Start for leading icons (search, email), End for trailing icons (visibility toggle, clear button).
     /// </summary>
     /// <example>
+    /// Basic form field with label:
     /// <code>
-    /// &lt;RadzenFormField Text="Search"&gt;
-    ///   &lt;RadzenTextBox @bind-Value="@text" /&gt;
+    /// &lt;RadzenFormField Text="Email Address"&gt;
+    ///     &lt;RadzenTextBox @bind-Value=@email /&gt;
+    /// &lt;/RadzenFormField&gt;
+    /// </code>
+    /// Form field with icon and validation:
+    /// <code>
+    /// &lt;RadzenTemplateForm Data=@model&gt;
+    ///     &lt;RadzenFormField Text="Search" Variant="Variant.Outlined"&gt;
+    ///         &lt;Start&gt;&lt;RadzenIcon Icon="search" /&gt;&lt;/Start&gt;
+    ///         &lt;ChildContent&gt;
+    ///             &lt;RadzenTextBox Name="SearchTerm" @bind-Value=@model.SearchTerm /&gt;
+    ///         &lt;/ChildContent&gt;
+    ///         &lt;Helper&gt;
+    ///             &lt;RadzenRequiredValidator Component="SearchTerm" Text="Search term is required" /&gt;
+    ///         &lt;/Helper&gt;
+    ///     &lt;/RadzenFormField&gt;
+    /// &lt;/RadzenTemplateForm&gt;
+    /// </code>
+    /// Floating label form field:
+    /// <code>
+    /// &lt;RadzenFormField Text="Username" AllowFloatingLabel="true" Variant="Variant.Filled"&gt;
+    ///     &lt;RadzenTextBox /&gt;
     /// &lt;/RadzenFormField&gt;
     /// </code>
     /// </example>
-    public partial class RadzenFormField : RadzenComponent
+    public partial class RadzenFormField : RadzenComponent, IAsyncDisposable
     {
-        /// <summary>
-        /// Gets or sets the child content. The child content is wrapped by the form field. Can be used with RadzenTextBox, RadzenTextArea, RadzenPassword, RadzenDropDown, RadzenDropDownList, RadzenNumeric.
-        /// </summary>
-        [Parameter]
-        public RenderFragment ChildContent { get; set; }
+        private IJSObjectReference? _jsRef;
+        private int _jsRefVersion;
+        private bool _visibleChanged;
+
+        /// <inheritdoc />
+        public override async Task SetParametersAsync(ParameterView parameters)
+        {
+            if (parameters.DidParameterChange(nameof(Visible), Visible))
+            {
+                _visibleChanged = true;
+            }
+
+            await base.SetParametersAsync(parameters);
+        }
+
+        /// <inheritdoc />
+        protected override async Task OnAfterRenderAsync(bool firstRender)
+        {
+            await base.OnAfterRenderAsync(firstRender);
+
+            if ((firstRender || _visibleChanged) && JSRuntime != null)
+            {
+                _visibleChanged = false;
+
+                var version = ++_jsRefVersion;
+                var jsRef = _jsRef;
+                _jsRef = null;
+
+                if (jsRef != null)
+                {
+                    await jsRef.InvokeVoidAsync("dispose");
+                    await jsRef.DisposeAsync();
+                }
+
+                if (version != _jsRefVersion)
+                {
+                    return;
+                }
+
+                if (Visible)
+                {
+                    var created = await JSRuntime.InvokeAsync<IJSObjectReference>("Radzen.createFormField", Element);
+
+                    if (version == _jsRefVersion)
+                    {
+                        _jsRef = created;
+                    }
+                    else if (created != null)
+                    {
+                        await created.InvokeVoidAsync("dispose");
+                        await created.DisposeAsync();
+                    }
+                }
+            }
+        }
+
+        /// <inheritdoc />
+        public async ValueTask DisposeAsync()
+        {
+            _jsRefVersion++;
+            var jsRef = _jsRef;
+            _jsRef = null;
+
+            if (jsRef != null)
+            {
+                try { await jsRef.InvokeVoidAsync("dispose"); } catch { }
+                try { await jsRef.DisposeAsync(); } catch { }
+            }
+        }
 
         /// <summary>
-        /// Gets or sets the optional content that will be rendered before the child content. Usually used with RadzenIcon.
+        /// Gets or sets the input component to wrap.
+        /// Place the input component (RadzenTextBox, RadzenDropDown, etc.) here.
+        /// The form field automatically integrates with the input for labels and validation.
         /// </summary>
-        /// <example>
-        /// <code>
-        /// &lt;RadzenFormField Text="Search"&gt;
-        ///   &lt;Start&gt;
-        ///     &lt;RadzenIcon Icon="search" /&gt;
-        ///   &lt;/Start&gt;
-        ///   &lt;ChildContent&gt;
-        ///     &lt;RadzenTextBox @bind-Value="@text" /&gt;
-        ///   &lt;/ChildContent&gt;
-        /// &lt;/RadzenFormField&gt;
-        /// </code>
-        /// </example>
+        /// <value>The input component render fragment.</value>
         [Parameter]
-        public RenderFragment Start { get; set; }
+        public RenderFragment? ChildContent { get; set; }
 
         /// <summary>
-        /// Gets or sets the optional content that will be rendered after the child content. Usually used with RadzenIcon.
+        /// Gets or sets content to render before (leading position of) the input field.
+        /// Typically used for icons like search, email, lock, or prefix text like currency symbols.
+        /// Appears inside the form field border, before the input element.
         /// </summary>
-        /// <example>
-        /// <code>
-        /// &lt;RadzenFormField&gt;
-        ///   &lt;End&gt;
-        ///     &lt;RadzenIcon Icon="search" /&gt;
-        ///   &lt;/End&gt;
-        ///   &lt;ChildContent&gt;
-        ///     &lt;RadzenTextBox @bind-Value="@text" /&gt;
-        ///   &lt;/ChildContent&gt;
-        /// &lt;/RadzenFormField&gt;
-        /// </code>
-        /// </example>
+        /// <value>The start content render fragment.</value>
         [Parameter]
-        public RenderFragment End { get; set; }
+        public RenderFragment? Start { get; set; }
 
         /// <summary>
-        /// Gets or sets the optional content that will be rendered below the child content. Used with a validator or to display some additional information.
+        /// Gets or sets content to render after (trailing position of) the input field.
+        /// Typically used for icons like visibility toggle, clear button, or suffix text like units.
+        /// Appears inside the form field border, after the input element.
         /// </summary>
-        /// <example>
-        /// <code>
-        /// &lt;RadzenFormField&gt;
-        ///   &lt;Helper&gt;
-        ///    &lt;RadzenRequiredValidator Component="Text" /&gt;
-        ///   &lt;/Helper&gt;
-        ///   &lt;ChildContent&gt;
-        /// .   &lt;RadzenTextBox @bind-Value="@text" Name="Text" /&gt;
-        ///   &lt;/ChildContent&gt;
-        /// &lt;/RadzenFormField&gt;
-        /// </code>
-        /// </example>
+        /// <value>The end content render fragment.</value>
         [Parameter]
-        public RenderFragment Helper { get; set; }
+        public RenderFragment? End { get; set; }
 
+        /// <summary>
+        /// Gets or sets content to render below the input field.
+        /// Used for helper text, hints, character counters, or validation messages.
+        /// Validators placed here are automatically displayed when validation fails.
+        /// </summary>
+        /// <value>The helper content render fragment.</value>
+        [Parameter]
+        public RenderFragment? Helper { get; set; }
+        /// <summary>
+        /// Gets or sets the custom content for the label using a Razor template.
+        /// When provided, this template will be rendered instead of the plain text specified in the Text parameter.
+        /// </summary>
+
+        [Parameter]
+        public RenderFragment? TextTemplate { get; set; }
         /// <summary>
         /// Gets or sets the label text.
         /// </summary>
         [Parameter]
-        public string Text { get; set; }
+        public string? Text { get; set; }
 
         /// <summary>
         /// Gets or sets a value indicating whether the label is floating or fixed on top.
@@ -121,10 +202,18 @@ namespace Radzen.Blazor
         public bool AllowFloatingLabel { get; set; } = true;
 
         /// <summary>
+        /// Gets or sets a value indicating whether clicking the Start content, the End content or the empty area inside the form field border focuses the input.
+        /// Clicks on interactive Start or End content such as buttons and links are not affected.
+        /// </summary>
+        /// <value><c>true</c> if clicking anywhere inside the form field focuses the input; otherwise, <c>false</c>.</value>
+        [Parameter]
+        public bool FocusOnClick { get; set; }
+
+        /// <summary>
         /// Gets or sets the name of the form field. Used to associate the label with a component.
         /// </summary>
         [Parameter]
-        public string Component { get; set; }
+        public string? Component { get; set; }
 
         /// <summary>
         /// Gets or sets the design variant of the form field.
@@ -161,9 +250,10 @@ namespace Radzen.Blazor
         }
 
         /// <inheritdoc />
-        protected override string GetComponentCssClass()
-        {
-            return ClassList.Create($"rz-form-field rz-variant-{Enum.GetName(typeof(Variant), Variant).ToLowerInvariant()}").AddDisabled(disabled).Add("rz-floating-label", AllowFloatingLabel == true).ToString();
-        }
+        protected override string GetComponentCssClass() => ClassList.Create("rz-form-field")
+            .AddVariant(Variant)
+            .AddDisabled(disabled)
+            .Add("rz-floating-label", AllowFloatingLabel)
+            .ToString();
     }
 }

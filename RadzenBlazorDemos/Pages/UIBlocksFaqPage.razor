@@ -1,0 +1,65 @@
+﻿@page "/ui-blocks-faq"
+
+<RadzenText TextStyle="TextStyle.H2" TagName="TagName.H1" class="rz-pt-8">
+    Blazor FAQ - Frequently Asked Questions
+</RadzenText>
+
+<RadzenText TextStyle="TextStyle.Subtitle1" TagName="TagName.P" class="rz-pb-4" Style="max-width: 1000px;">
+    Use the FAQ UI Block to provide answers to common questions users might have.
+</RadzenText>
+
+<RadzenText Anchor="ui-blocks-faq#faq-in-2-columns" TextStyle="TextStyle.H5" TagName="TagName.H2" class="rz-pt-12 rz-mb-6">
+    FAQ in 2 columns
+</RadzenText>
+<RadzenCard class="rz-p-0 rz-material-3-demo-card">
+    <RadzenTabs class="example-tabs">
+        <Tabs>
+            <RadzenTabsItem Text="Example">
+                <UIBlock Path="/faq/faq-in-2-columns" Title="FAQ in 2 columns" />
+            </RadzenTabsItem>
+            <UIBlocks />
+        </Tabs>
+    </RadzenTabs>
+</RadzenCard>
+
+<RadzenText Anchor="ui-blocks-faq#faq-to-the-right" TextStyle="TextStyle.H5" TagName="TagName.H2" class="rz-pt-12 rz-mb-6">
+    FAQ to the right
+</RadzenText>
+<RadzenCard class="rz-p-0 rz-material-3-demo-card">
+    <RadzenTabs class="example-tabs">
+        <Tabs>
+            <RadzenTabsItem Text="Dark">
+                <UIBlock Path="/faq/faq-to-the-right" Title="FAQ to the right" />
+            </RadzenTabsItem>
+            <UIBlocks />
+        </Tabs>
+    </RadzenTabs>
+</RadzenCard>
+
+<RadzenText Anchor="ui-blocks-faq#faq-accordion-to-the-right" TextStyle="TextStyle.H5" TagName="TagName.H2" class="rz-pt-12 rz-mb-6">
+    FAQ Accordion to the right
+</RadzenText>
+<RadzenCard class="rz-p-0 rz-material-3-demo-card">
+    <RadzenTabs class="example-tabs">
+        <Tabs>
+            <RadzenTabsItem Text="Primary">
+                <UIBlock Path="/faq/faq-accordion-to-the-right" Title="FAQ Accordion to the right" />
+            </RadzenTabsItem>
+            <UIBlocks />
+        </Tabs>
+    </RadzenTabs>
+</RadzenCard>
+
+<RadzenText Anchor="ui-blocks-faq#faq-in-centered-accordion" TextStyle="TextStyle.H5" TagName="TagName.H2" class="rz-pt-12 rz-mb-6">
+    FAQ in centered Accordion
+</RadzenText>
+<RadzenCard class="rz-p-0 rz-material-3-demo-card">
+    <RadzenTabs class="example-tabs">
+        <Tabs>
+            <RadzenTabsItem Text="Light">
+                <UIBlock Path="/faq/faq-in-centered-accordion" Title="FAQ in centered Accordion" />
+            </RadzenTabsItem>
+            <UIBlocks />
+        </Tabs>
+    </RadzenTabs>
+</RadzenCard>

@@ -1,4 +1,4 @@
-﻿using Microsoft.AspNetCore.Components;
+using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.Forms;
 using Microsoft.AspNetCore.Components.Web;
 using Radzen.Blazor.Rendering;
@@ -24,30 +24,51 @@ namespace Radzen.Blazor
         /// </summary>
         /// <value>The attributes.</value>
         [Parameter]
-        public IReadOnlyDictionary<string, object> InputAttributes { get; set; }
+        public IReadOnlyDictionary<string, object>? InputAttributes { get; set; }
 
         /// <summary>
         /// Gets or sets the name.
         /// </summary>
         /// <value>The name.</value>
         [Parameter]
-        public string Name { get; set; }
+        public string? Name { get; set; }
 
         /// <summary>
         /// Gets or sets the placeholder.
         /// </summary>
         /// <value>The placeholder.</value>
         [Parameter]
-        public string Placeholder { get; set; }
+        public string? Placeholder { get; set; }
 
         /// <summary>
         /// Gets or sets the toggle icon.
         /// </summary>
         /// <value>The toggle icon.</value>
         [Parameter]
-        public string ToggleIcon { get; set; }
+        public string? ToggleIcon { get; set; }
 
-        private string getIcon()
+        /// <summary>
+        /// Gets or sets the aria-expanded attribute.
+        /// </summary>
+        /// <value>The aria-expanded attribute.</value>
+        [Parameter]
+        public string? AriaExpanded { get; set; }
+
+        /// <summary>
+        /// Gets or sets the aria-controls attribute.
+        /// </summary>
+        /// <value>The aria-controls attribute.</value>
+        [Parameter]
+        public string? AriaControls { get; set; }
+
+        /// <summary>
+        /// Gets or sets the aria-haspopup attribute.
+        /// </summary>
+        /// <value>The aria-haspopup attribute.</value>
+        [Parameter]
+        public string? AriaHasPopup { get; set; }
+
+        private string? GetIcon()
         {
             return Value && !string.IsNullOrEmpty(ToggleIcon) ? ToggleIcon : Icon;
         }
@@ -55,21 +76,21 @@ namespace Radzen.Blazor
         /// <summary>
         /// The form
         /// </summary>
-        IRadzenForm _form;
+        IRadzenForm? _form;
 
         /// <summary>
         /// Gets or sets the edit context.
         /// </summary>
         /// <value>The edit context.</value>
         [CascadingParameter]
-        public EditContext EditContext { get; set; }
+        public EditContext? EditContext { get; set; }
 
         /// <summary>
         /// Gets or sets the form.
         /// </summary>
         /// <value>The form.</value>
         [CascadingParameter]
-        public IRadzenForm Form
+        public IRadzenForm? Form
         {
             get
             {
@@ -149,13 +170,15 @@ namespace Radzen.Blazor
         /// Gets the field identifier.
         /// </summary>
         /// <value>The field identifier.</value>
-        public FieldIdentifier FieldIdentifier { get; private set; }
+        [Parameter]
+        public FieldIdentifier FieldIdentifier { get; set; }
+
         /// <summary>
         /// Gets or sets the value expression.
         /// </summary>
         /// <value>The value expression.</value>
         [Parameter]
-        public Expression<Func<bool>> ValueExpression { get; set; }
+        public Expression<Func<bool>>? ValueExpression { get; set; }
         /// <summary>
         /// Sets the parameters asynchronous.
         /// </summary>
@@ -187,7 +210,7 @@ namespace Radzen.Blazor
         /// </summary>
         /// <param name="sender">The sender.</param>
         /// <param name="e">The <see cref="ValidationStateChangedEventArgs"/> instance containing the event data.</param>
-        private void ValidationStateChanged(object sender, ValidationStateChangedEventArgs e)
+        private void ValidationStateChanged(object? sender, ValidationStateChangedEventArgs e)
         {
             StateHasChanged();
         }
@@ -205,6 +228,8 @@ namespace Radzen.Blazor
             }
 
             Form?.RemoveComponent(this);
+
+            GC.SuppressFinalize(this);
         }
 
         /// <summary>
@@ -217,7 +242,7 @@ namespace Radzen.Blazor
         }
 
         /// <summary>
-        /// Handles the <see cref="E:ContextMenu" /> event.
+        /// Handles the context menu event.
         /// </summary>
         /// <param name="args">The <see cref="MouseEventArgs"/> instance containing the event data.</param>
         /// <returns>Task.</returns>
@@ -231,21 +256,12 @@ namespace Radzen.Blazor
             return Task.CompletedTask;
         }
 
-        /// <summary>
-        /// Gets the class list.
-        /// </summary>
-        /// <param name="className">Name of the class.</param>
-        /// <returns>ClassList.</returns>
-        protected ClassList GetClassList(string className) => ClassList.Create(className)
-                                                                       .AddDisabled(Disabled)
-                                                                       .Add(FieldIdentifier, EditContext);
-
         /// <summary> Provides support for RadzenFormField integration. </summary>
         [CascadingParameter]
-        public IFormFieldContext FormFieldContext { get; set; }
+        public IFormFieldContext? FormFieldContext { get; set; }
 
         /// <summary> Gets the current placeholder. Returns empty string if this component is inside a RadzenFormField.</summary>
-        protected string CurrentPlaceholder => FormFieldContext?.AllowFloatingLabel == true ? " " : Placeholder;
+        protected string CurrentPlaceholder => FormFieldContext?.AllowFloatingLabel == true ? " " : Placeholder ?? "";
 
         /// <inheritdoc/>
         public virtual async ValueTask FocusAsync()
@@ -279,22 +295,20 @@ namespace Radzen.Blazor
         }
 
         /// <inheritdoc />
-        protected override string GetComponentCssClass()
-        {
-            var classes = GetClassList("rz-toggle-button");
+        protected override string GetComponentCssClass() => ClassList.Create("rz-button rz-toggle-button")
+                .Add("rz-button-icon-only", string.IsNullOrEmpty(Text) && !string.IsNullOrEmpty(Icon))
+                .AddButtonSize(Size)
+                .AddVariant(CurrentVariant)
+                .AddButtonStyle(CurrentButtonStyle)
+                .AddShade(CurrentShade)
+                .AddDisabled(IsDisabled)
+                .Add(FieldIdentifier, EditContext)
+                .Add("rz-state-active", HasValue)
+                .ToString();
 
-            if (HasValue)
-            {
-                classes.Add("rz-state-active", Value);
-            }
-
-            var baseClasses = HasValue ?
-                $"rz-button rz-button-{getButtonSize()} rz-variant-{Enum.GetName(typeof(Variant), Variant).ToLowerInvariant()} rz-{Enum.GetName(typeof(ButtonStyle), ToggleButtonStyle).ToLowerInvariant()} rz-shade-{Enum.GetName(typeof(Shade), ToggleShade).ToLowerInvariant()}{(IsDisabled ? " rz-state-disabled" : "")}{(string.IsNullOrEmpty(Text) && !string.IsNullOrEmpty(Icon) ? " rz-button-icon-only" : "")}" :
-            $"rz-button rz-button-{getButtonSize()} rz-variant-{Enum.GetName(typeof(Variant), Variant).ToLowerInvariant()} rz-{Enum.GetName(typeof(ButtonStyle), ButtonStyle).ToLowerInvariant()} rz-shade-{Enum.GetName(typeof(Shade), Shade).ToLowerInvariant()}{(IsDisabled ? " rz-state-disabled" : "")}{(string.IsNullOrEmpty(Text) && !string.IsNullOrEmpty(Icon) ? " rz-button-icon-only" : "")}";
-
-
-            return $"{baseClasses} {classes.ToString()}";
-        }
+        private Shade CurrentShade => HasValue ? ToggleShade : Shade;
+        private ButtonStyle CurrentButtonStyle => HasValue ? ToggleButtonStyle : ButtonStyle;
+        private Variant CurrentVariant => HasValue && ToggleVariant.HasValue ? ToggleVariant.Value : Variant;
 
         /// <summary>
         /// Gets or sets the ToggleButton style.
@@ -309,5 +323,19 @@ namespace Radzen.Blazor
         /// <value>The ToggleButton shade.</value>
         [Parameter]
         public Shade ToggleShade { get; set; } = Shade.Darker;
+
+        /// <summary>
+        /// Gets or sets the variant used when the button is toggled.
+        /// </summary>
+        /// <value>The toggled variant. When null, the Variant property is used.</value>
+        [Parameter]
+        public Variant? ToggleVariant { get; set; }
+
+        /// <summary>
+        /// Gets or sets the aria-label attribute.
+        /// </summary>
+        /// <value>The aria-label attribute.</value>
+        [Parameter]
+        public string? AriaLabel { get; set; }
     }
 }

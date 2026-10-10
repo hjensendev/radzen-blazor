@@ -1,13 +1,33 @@
-﻿using Microsoft.AspNetCore.Components;
+using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.Routing;
 using Microsoft.AspNetCore.Components.Web;
+using Microsoft.JSInterop;
 using System.Threading.Tasks;
 
 namespace Radzen.Blazor
 {
     /// <summary>
-    /// RadzenProfileMenuItem component.
+    /// A menu item component used within RadzenProfileMenu to define individual navigation or action items.
+    /// RadzenProfileMenuItem represents one clickable item in a profile menu dropdown with support for icons, navigation, and custom content.
+    /// Used inside RadzenProfileMenu to create user profile dropdown menus. Each item can navigate to a page (via Path), trigger an action (via click event), or display custom content (via Template).
+    /// Common uses in profile menus include account settings, user profile page, logout/sign out, preferences, and help/documentation.
+    /// Items support icons, images, text, and custom templates for flexible rendering.
     /// </summary>
+    /// <example>
+    /// Profile menu items in a profile menu:
+    /// <code>
+    /// &lt;RadzenProfileMenu&gt;
+    ///     &lt;Template&gt;
+    ///         &lt;RadzenIcon Icon="account_circle" /&gt; John Doe
+    ///     &lt;/Template&gt;
+    ///     &lt;ChildContent&gt;
+    ///         &lt;RadzenProfileMenuItem Text="Profile" Icon="person" Path="/profile" /&gt;
+    ///         &lt;RadzenProfileMenuItem Text="Settings" Icon="settings" Path="/settings" /&gt;
+    ///         &lt;RadzenProfileMenuItem Text="Logout" Icon="logout" Value="logout" /&gt;
+    ///     &lt;/ChildContent&gt;
+    /// &lt;/RadzenProfileMenu&gt;
+    /// </code>
+    /// </example>
     public partial class RadzenProfileMenuItem : RadzenComponent
     {
         /// <inheritdoc />
@@ -16,26 +36,51 @@ namespace Radzen.Blazor
             return "rz-navigation-item";
         }
 
+        private string? imageAlternateText;
+
         /// <summary>
         /// Gets or sets the text.
         /// </summary>
         /// <value>The text.</value>
         [Parameter]
-        public string ImageAlternateText { get; set; } = "image";
+        public string ImageAlternateText { get => imageAlternateText ?? Localize(nameof(RadzenStrings.ProfileMenuItem_ImageAlternateText)); set => imageAlternateText = value; }
 
         /// <summary>
         /// Gets or sets the target.
         /// </summary>
         /// <value>The target.</value>
         [Parameter]
-        public string Target { get; set; }
+        public string? Target { get; set; }
 
         /// <summary>
         /// Gets or sets the path.
         /// </summary>
         /// <value>The path.</value>
         [Parameter]
-        public string Path { get; set; }
+        public string? Path { get; set; }
+
+        /// <summary>
+        /// Specifies the form <c>method</c> attribute. Used together with <see cref="Action" />. Defaults to <c>post</c>.
+        /// </summary>
+        /// <example>
+        /// <code>
+        /// &lt;RadzenProfileMenuItem Text="Sign out" Icon="power_settings_new" Method="post" Action="Account/Logout" /&gt;
+        /// </code>
+        /// </example>
+        [Parameter]
+        public string? Method { get; set; }
+
+        /// <summary>
+        /// Specifies the form <c>action</c> attribute. When set the item renders a form with a submit button that submits to the specified URL.
+        /// The form includes the antiforgery token when the application provides one and <see cref="Method" /> is not <c>get</c>.
+        /// </summary>
+        /// <example>
+        /// <code>
+        /// &lt;RadzenProfileMenuItem Text="Sign out" Icon="power_settings_new" Action="Account/Logout" /&gt;
+        /// </code>
+        /// </example>
+        [Parameter]
+        public string? Action { get; set; }
 
         /// <summary>
         /// Gets or sets the navigation link match.
@@ -49,46 +94,53 @@ namespace Radzen.Blazor
         /// </summary>
         /// <value>The icon.</value>
         [Parameter]
-        public string Icon { get; set; }
+        public string? Icon { get; set; }
 
         /// <summary>
         /// Gets or sets the icon color.
         /// </summary>
         /// <value>The icon color.</value>
         [Parameter]
-        public string IconColor { get; set; }
+        public string? IconColor { get; set; }
 
         /// <summary>
         /// Gets or sets the image.
         /// </summary>
         /// <value>The image.</value>
         [Parameter]
-        public string Image { get; set; }
+        public string? Image { get; set; }
 
         /// <summary>
         /// Gets or sets the text.
         /// </summary>
         /// <value>The text.</value>
         [Parameter]
-        public string Text { get; set; }
+        public string? Text { get; set; }
 
         /// <summary>
         /// Gets or sets the value.
         /// </summary>
         /// <value>The value.</value>
         [Parameter]
-        public string Value { get; set; }
+        public string? Value { get; set; }
+
+        /// <summary>
+        /// Gets or sets the template.
+        /// </summary>
+        /// <value>The template.</value>
+        [Parameter]
+        public RenderFragment? Template { get; set; }
 
         /// <summary>
         /// Gets or sets the menu.
         /// </summary>
         /// <value>The menu.</value>
         [CascadingParameter]
-        public RadzenProfileMenu Menu { get; set; }
+        public RadzenProfileMenu? Menu { get; set; }
 
 
         /// <summary>
-        /// Handles the <see cref="E:Click" /> event.
+        /// Handles the click event.
         /// </summary>
         /// <param name="args">The <see cref="MouseEventArgs"/> instance containing the event data.</param>
         public async System.Threading.Tasks.Task OnClick(MouseEventArgs args)
@@ -99,13 +151,13 @@ namespace Radzen.Blazor
             }
         }
 
-        RadzenProfileMenu _parent;
+        RadzenProfileMenu? _parent;
         /// <summary>
         /// Gets or sets the parent.
         /// </summary>
         /// <value>The parent.</value>
         [CascadingParameter]
-        public RadzenProfileMenu Parent
+        public RadzenProfileMenu? Parent
         {
             get
             {
@@ -117,14 +169,41 @@ namespace Radzen.Blazor
                 {
                     _parent = value;
 
-                    _parent.AddItem(this);
+                    _parent?.AddItem(this);
                 }
+            }
+        }
+
+        ElementReference form;
+
+        string GetMethod()
+        {
+            return string.IsNullOrEmpty(Method) ? "post" : Method;
+        }
+
+        internal async Task Submit()
+        {
+            await OnClick(new MouseEventArgs());
+
+            if (JSRuntime != null)
+            {
+                await JSRuntime.InvokeVoidAsync("Radzen.submit", form);
             }
         }
 
         internal string GetItemCssClass()
         {
-            return $"{GetCssClass()} {(Parent.IsFocused(this) ? "rz-state-focused" : "")}".Trim();
+            return $"{GetCssClass()} {(Parent?.IsFocused(this) == true ? "rz-state-focused" : "")}".Trim();
+        }
+
+        internal string GetItemId()
+        {
+            return $"{GetId()}";
+        }
+
+        internal string GetItemTabIndex()
+        {
+            return "-1";
         }
     }
 }

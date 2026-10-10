@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Components;
 
@@ -9,8 +11,8 @@ namespace Radzen.Blazor.Rendering
     /// </summary>
     public abstract class DropableViewBase : ComponentBase
     {
-        private bool dragStarted = false;
-        private AppointmentData draggedAppointment;
+        private bool dragStarted;
+        private AppointmentData? draggedAppointment;
         /// <summary>
         /// Gets or sets the appointment move event callback.
         /// </summary>
@@ -25,11 +27,22 @@ namespace Radzen.Blazor.Rendering
         /// <returns>Task</returns>
         public async Task OnDrop(DateTime slotDate)
         {
+            await OnDrop(slotDate, null);
+        }
+
+        /// <summary>
+        /// Handles on slot drop on a slot of the specified resources.
+        /// </summary>
+        /// <param name="slotDate"></param>
+        /// <param name="resources">The resource items the slot belongs to keyed by resource type name.</param>
+        /// <returns>Task</returns>
+        public async Task OnDrop(DateTime slotDate, IDictionary<string, object>? resources)
+        {
             if (draggedAppointment != null)
             {
                 TimeSpan timespan = slotDate - draggedAppointment.Start;
 
-                await AppointmentMove.InvokeAsync(new SchedulerAppointmentMoveEventArgs { Appointment = draggedAppointment, TimeSpan = timespan });
+                await AppointmentMove.InvokeAsync(new SchedulerAppointmentMoveEventArgs { SlotDate = slotDate, Appointment = draggedAppointment, TimeSpan = timespan, Resources = resources, Resource = resources?.Values.LastOrDefault() });
 
                 draggedAppointment = null;
             }

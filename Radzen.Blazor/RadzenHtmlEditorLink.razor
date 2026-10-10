@@ -9,6 +9,8 @@
 @code {
     protected override async Task OnClick()
     {
+        if (Editor == null) return;
+        
         await Editor.SaveSelectionAsync();
 
         bool blank = false;
@@ -38,15 +40,15 @@
                     <label>@OpenInNewWindowText</label>
                 </div>
                 <div class="rz-html-editor-dialog-buttons">
-                    <RadzenButton Text=@OkText ButtonType="ButtonType.Submit" />
-                    <RadzenButton Text=@CancelText Click="()=> ds.Close(false)" ButtonStyle="ButtonStyle.Secondary" />
+                    <RadzenButton Text=@CancelText Click="()=> ds.Close(false)" ButtonStyle="ButtonStyle.Base" Variant="Variant.Outlined" />
+                    <RadzenButton Text=@OkText ButtonType="ButtonType.Submit" Variant="Variant.Flat" />
                 </div>
             </RadzenTemplateForm>
         </div>);
 
         await Editor.RestoreSelectionAsync();
 
-        if (result == true && !String.IsNullOrEmpty(attributes.Href))
+        if (result == true && !String.IsNullOrEmpty(attributes.Href) && Editor != null)
         {
             var html = new StringBuilder();
             html.AppendFormat("<a href=\"{0}\"", attributes.Href);
@@ -57,7 +59,10 @@
 
             html.AppendFormat(">{0}</a>", string.IsNullOrEmpty(attributes.InnerText) ? attributes.InnerHtml : attributes.InnerText);
 
-            await Editor.ExecuteCommandAsync("insertHTML", html.ToString());
+            if (Editor != null)
+            {
+                await Editor.ExecuteCommandAsync("insertHTML", html.ToString());
+            }
         }
     }
 }

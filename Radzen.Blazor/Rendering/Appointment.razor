@@ -1,25 +1,40 @@
+@using Microsoft.JSInterop
+@using System.Linq
 @using Radzen.Blazor
 @using Radzen.Blazor.Rendering
+@inject IJSRuntime JSRuntime
+@implements IAsyncDisposable
 
-    <div @ref=@element class="@($"{"rz-event"} {CssClass}".Trim())" draggable=@DraggableAttribute style=@Style @onclick=@OnClick @onmouseenter=@OnMouseEnter @onmouseleave=@OnMouseLeave @ondrag=@OnDragStart ondragstart=@OnDragStartAttribute>
-        <div class="rz-event-content" title=@Title @attributes=@Attributes>
-            @if (ShowAppointmentContent)
+    <div @ref=@element class="@($"rz-event {CssClass}".Trim())" style=@Style
+         role="button" tabindex="0" aria-label="@Data?.Text"
+         @onclick=@OnClick @onkeydown="OnKeyDown" @onmouseenter=@OnMouseEnter @onmouseleave=@OnMouseLeave
+         @attributes="@FilteredAdditionalAttributes">
+        <div title=@Title @attributes=@Attributes>
+            @if (ChildContent != null)
+            {
+                @ChildContent
+            }
+            else if (ShowAppointmentContent && Scheduler != null && Data != null)
             {
                 @Scheduler.RenderAppointment(Data)
             }
         </div>
+        @if (Resizable && CanResizeStart)
+        {
+            <div class="rz-event-resize rz-event-resize-start"></div>
+        }
+        @if (Resizable && CanResizeEnd)
+        {
+            <div class="rz-event-resize rz-event-resize-end"></div>
+        }
     </div>
 @code {
     private ElementReference element;
 
-    private string Title => Scheduler.HasMouseEnterAppointmentDelegate() ? null : Data?.Text;
-
-    private string DraggableAttribute => Scheduler?.HasAppointmentMoveDelegate() == true ? "true" : null;
-
-    private string OnDragStartAttribute => Scheduler?.HasAppointmentMoveDelegate() == true ? "event.dataTransfer.setData('', event.target.id)" : null;
+    private string? Title => Scheduler?.HasMouseEnterAppointmentDelegate() == true ? null : Data?.Text;
 
     [Parameter]
-    public string CssClass { get; set; }
+    public string? CssClass { get; set; }
 
     [Parameter]
     public double? Top { get; set; }
@@ -34,27 +49,53 @@
     public double? Height { get; set; }
 
     [Parameter]
+    public RenderFragment? ChildContent { get; set; }
+
+    [Parameter]
     public EventCallback<AppointmentData> Click { get; set; }
 
     [Parameter]
     public EventCallback<AppointmentData> DragStart { get; set; }
 
-    IDictionary<string, object> Attributes { get; set; }
+    [Parameter]
+    public int MinutesPerSlot { get; set; }
 
     [Parameter]
-    public AppointmentData Data { get; set; }
+    public bool CanResizeStart { get; set; } = true;
+
+    [Parameter]
+    public bool CanResizeEnd { get; set; } = true;
+
+    bool Resizable => MinutesPerSlot > 0 && Data != null && Scheduler?.HasAppointmentResizeDelegate() == true;
+
+    IDictionary<string, object> Attributes { get; set; } = new Dictionary<string, object>();
+
+    [Parameter]
+    public AppointmentData? Data { get; set; }
 
     [Parameter]
     public bool ShowAppointmentContent { get; set; } = true;
 
-    [CascadingParameter]
-    public IScheduler Scheduler { get; set; }
+    /// <summary>
+    /// Extra HTML attributes rendered on the outer element.
+    /// </summary>
+    [Parameter]
+    public IReadOnlyDictionary<string, object>? AdditionalAttributes { get; set; }
 
-    string Style { get; set; }
+    private IReadOnlyDictionary<string, object>? FilteredAdditionalAttributes =>
+        AdditionalAttributes != null && AdditionalAttributes.ContainsKey("style")
+            ? AdditionalAttributes.Where(kv => kv.Key != "style").ToDictionary(kv => kv.Key, kv => kv.Value)
+            : AdditionalAttributes;
+
+    [CascadingParameter]
+    public IScheduler? Scheduler { get; set; }
+
+    string Style { get; set; } = string.Empty;
 
     protected override void OnParametersSet()
     {
-        Attributes = Scheduler.GetAppointmentAttributes(Data);
+        Attributes = (Scheduler != null && Data != null) ? Scheduler.GetAppointmentAttributes(Data) : new Dictionary<string, object>();
+        Attributes["class"] = ClassList.Create("rz-event-content").Add(Attributes).ToString();
 
         var style = new List<string>();
 
@@ -79,6 +120,11 @@
         }
 
         Style = String.Join(";", style);
+
+        if (AdditionalAttributes != null && AdditionalAttributes.TryGetValue("style", out var extraStyle) && extraStyle is string s && !string.IsNullOrWhiteSpace(s))
+        {
+            Style = string.IsNullOrWhiteSpace(Style) ? s : Style.TrimEnd(';') + ";" + s;
+        }
     }
 
     async Task OnClick()
@@ -86,18 +132,105 @@
         await Click.InvokeAsync(Data);
     }
 
-    async Task OnMouseEnter()
+    async Task OnKeyDown(KeyboardEventArgs args)
     {
-        await Scheduler.MouseEnterAppointment(element, Data);
+        var key = args.Code != null ? args.Code : args.Key;
+        if (key == "Enter" || key == "Space")
+        {
+            await OnClick();
+        }
     }
 
-    async Task OnMouseLeave()
+    async Task OnMouseEnter(MouseEventArgs e)
     {
-        await Scheduler.MouseLeaveAppointment(element, Data);
+        if (Scheduler != null && Data != null)
+        {
+            await Scheduler.MouseEnterAppointment(element, Data, e.ClientX, e.ClientY);
+        }
     }
 
-    public async Task OnDragStart(DragEventArgs args)
+    async Task OnMouseLeave(MouseEventArgs e)
+    {
+        if (Scheduler != null && Data != null)
+        {
+            await Scheduler.MouseLeaveAppointment(element, Data, e.ClientX, e.ClientY);
+        }
+    }
+
+    [JSInvokable]
+    public async Task OnDragStartAsync()
     {
         await DragStart.InvokeAsync(Data);
+    }
+
+    [JSInvokable]
+    public async Task OnResizeAsync(double startOffsetMinutes, double endOffsetMinutes)
+    {
+        if (Scheduler != null && Data != null && (startOffsetMinutes != 0 || endOffsetMinutes != 0))
+        {
+            var start = Data.Start.AddMinutes(startOffsetMinutes);
+            var end = Data.End.AddMinutes(endOffsetMinutes);
+
+            if (end > start)
+            {
+                await Scheduler.AppointmentResize.InvokeAsync(new SchedulerAppointmentResizeEventArgs { Appointment = Data, Start = start, End = end });
+            }
+        }
+    }
+
+    private DotNetObjectReference<Appointment>? dotnetRef;
+
+    private IJSObjectReference? jsRef;
+
+    private IJSObjectReference? jsResizeRef;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            var draggable = Scheduler?.HasAppointmentMoveDelegate() == true;
+
+            if (draggable || Resizable)
+            {
+                dotnetRef = DotNetObjectReference.Create(this);
+            }
+
+            if (draggable)
+            {
+                jsRef = await JSRuntime.InvokeAsync<IJSObjectReference>("Radzen.createDraggable", element, dotnetRef, nameof(OnDragStartAsync));
+            }
+
+            if (Resizable)
+            {
+                jsResizeRef = await JSRuntime.InvokeAsync<IJSObjectReference>("Radzen.createSchedulerResizable", element, dotnetRef, nameof(OnResizeAsync), MinutesPerSlot);
+            }
+        }
+    }
+
+
+    public async ValueTask DisposeAsync()
+    {
+        try
+        {
+            if (jsRef != null)
+            {
+                await jsRef.InvokeVoidAsync("dispose");
+                await jsRef.DisposeAsync();
+            }
+
+            if (jsResizeRef != null)
+            {
+                await jsResizeRef.InvokeVoidAsync("dispose");
+                await jsResizeRef.DisposeAsync();
+            }
+        }
+        catch (JSDisconnectedException)
+        {
+        }
+        finally
+        {
+            dotnetRef?.Dispose();
+        }
+
     }
 }

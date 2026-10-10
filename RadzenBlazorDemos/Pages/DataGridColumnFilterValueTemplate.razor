@@ -7,12 +7,34 @@ ColumnWidth="300px" Filter="@OnFilter" FilterCleared="OnFilterCleared" TItem="Em
             </FilterValueTemplate>
         </RadzenDataGridColumn>
         <RadzenDataGridColumn Title="Customer" Property="CompanyName" Type="typeof(IEnumerable<string>)" FilterValue="@selectedCompanyNames" LogicalFilterOperator="LogicalFilterOperator.Or"
-        FilterOperator="FilterOperator.Contains" FilterOperators="@(new FilterOperator[]{ FilterOperator.Contains, FilterOperator.DoesNotContain})">
+                              FilterOperator="FilterOperator.Contains" FilterOperators="@(new FilterOperator[]{ FilterOperator.Contains, FilterOperator.DoesNotContain})">
             <FilterValueTemplate>
                 <RadzenDropDown @ref=scdd @bind-Value=@selectedCompanyNames Style="width:100%;" InputAttributes="@(new Dictionary<string,object>(){ { "aria-label", "filter by Company" }})"
-                Change=@OnSelectedCompanyNamesChange Data="@(companyNames)" AllowClear="true" Multiple="true" />
+                                Change=@OnSelectedCompanyNamesChange Data="@(companyNames)" AllowClear="true" Multiple="true" />
             </FilterValueTemplate>
         </RadzenDataGridColumn>
+
+        <RadzenDataGridColumn Title="Awards" Property="Awards" Type="typeof(IEnumerable<string>)" FilterValue="@selectedAwards" LogicalFilterOperator="LogicalFilterOperator.Or"
+                              FilterOperator="FilterOperator.In" FilterOperators="@(new FilterOperator[]{ FilterOperator.In, FilterOperator.NotIn})" CollectionFilterMode="@collectionFilterMode">
+            <FilterValueTemplate>
+                <RadzenDropDown @ref=sadd @bind-Value=@selectedAwards Style="width:100%;" InputAttributes="@(new Dictionary<string, object>() { { "aria-label", "filter by Awards" } })"
+                                Change=@OnSelectedAwardsChange Data="@(awards)" AllowClear="true" Multiple="true">
+                    <HeaderTemplate>
+                        <RadzenSelectBar @bind-Value=@collectionFilterMode Style="width:100%;margin-top:1rem;"
+                            TValue="CollectionFilterMode">
+                            <Items>
+                                <RadzenSelectBarItem Text="Any" Value="@(CollectionFilterMode.Any)" />
+                                <RadzenSelectBarItem Text="All" Value="@(CollectionFilterMode.All)" />
+                            </Items>
+                        </RadzenSelectBar>
+                    </HeaderTemplate>
+                </RadzenDropDown>
+            </FilterValueTemplate>
+            <Template>
+                @(string.Join(',', context.Awards))
+            </Template>
+        </RadzenDataGridColumn>
+
         <RadzenDataGridColumn Title="Hire Date" Property="HireDate.Date" FormatString="{0:d}"
         FilterValue="@hireDate?.Date">
             <FilterValueTemplate>
@@ -44,16 +66,20 @@ ColumnWidth="300px" Filter="@OnFilter" FilterCleared="OnFilterCleared" TItem="Em
 
 @code {
     RadzenDropDown<IEnumerable<string>> scdd;
+    RadzenDropDown<IEnumerable<string>> sadd;
     RadzenDropDown<IEnumerable<WorkStatus>> swdd;
     RadzenDataGrid<Employee> grid;
+    CollectionFilterMode collectionFilterMode;
     int? idValue;
     DateTime? hireDate;
     TitleOfCourtesy? currentTOC;
     IEnumerable<string> selectedCompanyNames;
+    IEnumerable<string> selectedAwards;
     IEnumerable<WorkStatus> selectedWorkStatus;
     IEnumerable<object> allWorkStatuses = Enum.GetValues(typeof(WorkStatus)).Cast<WorkStatus>().Select(t => new { Text = $"{t}", Value = t });
 
-    List<string> companyNames = new List<string> {"Vins et alcools Chevalier", "Toms Spezialitäten", "Hanari Carnes", "Richter Supermarkt", "Wellington Importadora", "Centro comercial Moctezuma" };
+    List<string> companyNames = new List<string> {"Vins et alcools Chevalier", "Toms Spezialitäten", "Hanari Carnes", "Richter Supermarkt", "Wellington Importadora", "Centro commercial Moctezuma" };
+    List<string> awards = new List<string> { "award 1", "award 2", "award 3", "award 4", "award 5" };
 
     public enum TitleOfCourtesy
     {
@@ -72,6 +98,7 @@ ColumnWidth="300px" Filter="@OnFilter" FilterCleared="OnFilterCleared" TItem="Em
     {
         public int ID { get; set; }
         public string CompanyName { get; set; }
+        public IEnumerable<string> Awards { get; set; }
         public DateTime HireDate { get; set; }
         public TitleOfCourtesy TitleOfCourtesy { get; set; }
         public IEnumerable<WorkStatus> WorkStatus { get; set; }
@@ -82,6 +109,14 @@ ColumnWidth="300px" Filter="@OnFilter" FilterCleared="OnFilterCleared" TItem="Em
         if (selectedCompanyNames != null && !selectedCompanyNames.Any())
         {
             selectedCompanyNames = null;  
+        }
+    }
+
+    void OnSelectedAwardsChange(object value)
+    {
+        if (selectedAwards != null && !selectedAwards.Any())
+        {
+            selectedAwards = null;
         }
     }
 
@@ -116,6 +151,11 @@ ColumnWidth="300px" Filter="@OnFilter" FilterCleared="OnFilterCleared" TItem="Em
         {
             selectedCompanyNames = null;
             scdd.Reset();
+        }
+        else if (args.Column.Property == "Awards")
+        {
+            selectedAwards = null;
+            sadd.Reset();
         }
         else if (args.Column.Property == "HireDate.Date")
         {
@@ -154,6 +194,7 @@ ColumnWidth="300px" Filter="@OnFilter" FilterCleared="OnFilterCleared" TItem="Em
             {
                 ID = i,
                 CompanyName = i < 4 ? companyNames[0] : companyNames[i - 4],
+                Awards = awards[..^(i % 5)],
                 HireDate = DateTime.Now.AddMonths(-i),
                 TitleOfCourtesy = i < 5 ? TitleOfCourtesy.Mr : TitleOfCourtesy.Ms,
                     WorkStatus = i < 3 ?

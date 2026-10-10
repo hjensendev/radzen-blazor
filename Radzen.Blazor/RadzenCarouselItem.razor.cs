@@ -1,5 +1,4 @@
 ﻿using Microsoft.AspNetCore.Components;
-using Microsoft.JSInterop;
 using Radzen.Blazor.Rendering;
 using System;
 using System.Collections.Generic;
@@ -16,48 +15,66 @@ namespace Radzen.Blazor
         /// Gets the class list.
         /// </summary>
         /// <value>The class list.</value>
-        ClassList ClassList => ClassList.Create()
-                                        .Add("rz-carousel-item")
-                                        .Add(Attributes);
+        string Class => ClassList.Create("rz-carousel-item")
+                                 .Add(Attributes)
+                                 .ToString();
         
         /// <summary>
         /// Gets or sets the arbitrary attributes.
         /// </summary>
         /// <value>The arbitrary attributes.</value>
         [Parameter(CaptureUnmatchedValues = true)]
-        public IDictionary<string, object> Attributes { get; set; }
+        public IDictionary<string, object>? Attributes { get; set; }
 
         /// <summary>
         /// Gets or sets the child content.
         /// </summary>
         /// <value>The child content.</value>
         [Parameter]
-        public RenderFragment ChildContent { get; set; }
+        public RenderFragment? ChildContent { get; set; }
 
         /// <summary>
         /// Gets or sets the tabs.
         /// </summary>
         /// <value>The tabs.</value>
         [CascadingParameter]
-        public RadzenCarousel Carousel { get; set; }
+        public RadzenCarousel? Carousel { get; set; }
 
         /// <inheritdoc />
         protected override async Task OnInitializedAsync()
         {
             await base.OnInitializedAsync();
 
-            Carousel.AddItem(this);
-
-            itemIndex = Carousel.items.IndexOf(this);
+            if (Carousel != null)
+            {
+                Carousel.AddItem(this);
+                itemIndex = Carousel.items.IndexOf(this);
+            }
         }
 
         /// <inheritdoc />
         public void Dispose()
         {
             Carousel?.RemoveItem(this);
+            GC.SuppressFinalize(this);
         }
+
+        string? ItemStyle => Carousel != null && Carousel.ItemsPerPage > 1
+            ? $"flex: 0 0 calc(100% / {Carousel.ItemsPerPage}); width: calc(100% / {Carousel.ItemsPerPage})"
+            : null;
+
+        string? SnapperStyle => Carousel != null && Carousel.ItemsPerPage > 1
+            ? (Carousel.items.IndexOf(this) % Carousel.ItemsPerPage == 0 ? "scroll-snap-align: start" : "scroll-snap-align: none")
+            : null;
 
         int itemIndex;
         internal ElementReference element;
+
+        internal bool IsActive => Carousel == null || Carousel.IsItemActive(Carousel.items.IndexOf(this));
+
+        internal void Refresh()
+        {
+            StateHasChanged();
+        }
     }
 }

@@ -1,19 +1,46 @@
 ﻿using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.Forms;
+using Radzen;
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
+using System.Globalization;
 using System.Linq;
+using System.Linq.Expressions;
 using System.Text;
 using System.Threading.Tasks;
 
 namespace Radzen.Blazor
 {
     /// <summary>
-    /// RadzenCard component.
+    /// RadzenPickList component.
     /// </summary>
-    public partial class RadzenPickList<TItem> : RadzenComponent
+    [UnconditionalSuppressMessage(TrimMessages.Trimming, TrimMessages.IL2026, Justification = TrimMessages.DataTypePreserved)]
+    public partial class RadzenPickList<
+        [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.PublicFields)] TItem> : RadzenComponent
     {
+        /// <summary>
+        /// Gets or sets the edit context.
+        /// </summary>
+        [CascadingParameter]
+        public EditContext? EditContext { get; set; }
+
+        /// <summary>
+        /// Gets or sets the source expression used to create the FieldIdentifier for source validation.
+        /// </summary>
+        [Parameter]
+        public Expression<Func<IEnumerable<TItem>?>>? SourceExpression { get; set; }
+
+        /// <summary>
+        /// Gets or sets the target expression used to create the FieldIdentifier for target validation.
+        /// </summary>
+        [Parameter]
+        public Expression<Func<IEnumerable<TItem>?>>? TargetExpression { get; set; }
+
+        FieldIdentifier? sourceFieldIdentifier;
+        FieldIdentifier? targetFieldIdentifier;
+
         /// <summary>
         /// Gets or sets a value indicating whether it is allowed to move all items.
         /// </summary>
@@ -36,6 +63,13 @@ namespace Radzen.Blazor
         public bool AllowMoveAllTargetToSource { get; set; } = true;
 
         /// <summary>
+        /// Gets or sets a value indicating whether to move all or only avaialable after filter items.
+        /// </summary>
+        /// <value><c>true</c> if c allowed to move filtered items only; otherwise, <c>false</c>.</value>
+        [Parameter]
+        public bool MoveFilteredItemsOnlyOnMoveAll { get; set; }
+
+        /// <summary>
         /// Gets or sets a value indicating whether multiple selection is allowed.
         /// </summary>
         /// <value><c>true</c> if multiple selection is allowed; otherwise, <c>false</c>.</value>
@@ -50,6 +84,12 @@ namespace Radzen.Blazor
         public bool AllowSelectAll { get; set; } = true;
 
         /// <summary>
+        /// Gets or sets a value indicating whether virtualization is enabled for the source and target listboxes.
+        /// </summary>
+        /// <value><c>true</c> if virtualization is enabled; otherwise, <c>false</c>.</value>
+        [Parameter]
+        public bool AllowVirtualization { get; set; }
+        /// <summary>
         /// Gets or sets a value indicating whether component is disabled.
         /// </summary>
         /// <value><c>true</c> if component is disabled; otherwise, <c>false</c>.</value>
@@ -61,72 +101,155 @@ namespace Radzen.Blazor
         /// </summary>
         /// <value>The source header.</value>
         [Parameter]
-        public RenderFragment SourceHeader { get; set; }
+        public RenderFragment? SourceHeader { get; set; }
 
         /// <summary>
         /// Gets or sets the target header
         /// </summary>
         /// <value>The target header.</value>
         [Parameter]
-        public RenderFragment TargetHeader { get; set; }
+        public RenderFragment? TargetHeader { get; set; }
 
         /// <summary>
         /// Gets or sets the common placeholder
         /// </summary>
         /// <value>The common placeholder.</value>
         [Parameter]
-        public string Placeholder { get; set; }
+        public string? Placeholder { get; set; }
 
         /// <summary>
         /// Gets or sets the source placeholder
         /// </summary>
         /// <value>The source placeholder.</value>
         [Parameter]
-        public string SourcePlaceholder { get; set; }
+        public string? SourcePlaceholder { get; set; }
 
         /// <summary>
         /// Gets or sets the target placeholder
         /// </summary>
         /// <value>The target placeholder.</value>
         [Parameter]
-        public string TargetPlaceholder { get; set; }
+        public string? TargetPlaceholder { get; set; }
 
         /// <summary>
         /// Gets or sets the text property
         /// </summary>
         /// <value>The text property.</value>
         [Parameter]
-        public string TextProperty { get; set; }
+        public string? TextProperty { get; set; }
+
+        /// <summary>
+        /// Gets or sets the value property
+        /// </summary>
+        /// <value>The value property.</value>
+        [Parameter]
+        public string? ValueProperty { get; set; }
 
         /// <summary>
         /// Gets or sets the disabled property
         /// </summary>
         /// <value>The disabled property.</value>
         [Parameter]
-        public string DisabledProperty { get; set; }
+        public string? DisabledProperty { get; set; }
 
         /// <summary>
-        /// Gets or sets the source template
+        /// Gets or sets the template.
+        /// </summary>
+        /// <value>The template.</value>
+        [Parameter]
+        public RenderFragment<TItem>? Template { get; set; }
+        
+        /// <summary>
+        /// Gets or sets the source template. Overrides <see cref="Template"/>.
         /// </summary>
         /// <value>The source template.</value>
         [Parameter]
-        public RenderFragment<TItem> Template { get; set; }
+        public RenderFragment<TItem>? SourceTemplate { get; set; }
+        
+        /// <summary>
+        /// Gets or sets the target template. Overrides <see cref="Template"/>.
+        /// </summary>
+        /// <value>The target template.</value>
+        [Parameter]
+        public RenderFragment<TItem>? TargetTemplate { get; set; }
 
         /// <summary>
         /// Gets or sets the select all text.
         /// </summary>
         /// <value>The select all text.</value>
         [Parameter]
-        public string SelectAllText { get; set; }
+        public string? SelectAllText { get; set; }
+
+        private string? emptyText;
+
+        /// <summary>
+        /// Gets or sets the empty text shown when a list has no items.
+        /// </summary>
+        /// <value>The empty text.</value>
+        [Parameter]
+        public string EmptyText { get => emptyText ?? Localize(nameof(RadzenStrings.PickList_EmptyText)); set => emptyText = value; }
+
+        private string? sourceAriaLabel;
+
+        /// <summary>
+        /// Gets or sets the aria-label of the source list. Ignored when <see cref="SourceHeader"/> is rendered - the source list is labelled by the header instead.
+        /// </summary>
+        /// <value>The source list aria-label.</value>
+        [Parameter]
+        public string SourceAriaLabel { get => sourceAriaLabel ?? Localize(nameof(RadzenStrings.PickList_SourceAriaLabel)); set => sourceAriaLabel = value; }
+
+        private string? targetAriaLabel;
+
+        /// <summary>
+        /// Gets or sets the aria-label of the target list. Ignored when <see cref="TargetHeader"/> is rendered - the target list is labelled by the header instead.
+        /// </summary>
+        /// <value>The target list aria-label.</value>
+        [Parameter]
+        public string TargetAriaLabel { get => targetAriaLabel ?? Localize(nameof(RadzenStrings.PickList_TargetAriaLabel)); set => targetAriaLabel = value; }
+
+        /// <summary>
+        /// Gets or sets the empty text shown when the source list has no items. Overrides <see cref="EmptyText"/>.
+        /// </summary>
+        /// <value>The source empty text.</value>
+        [Parameter]
+        public string? SourceEmptyText { get; set; }
+
+        /// <summary>
+        /// Gets or sets the empty text shown when the target list has no items. Overrides <see cref="EmptyText"/>.
+        /// </summary>
+        /// <value>The target empty text.</value>
+        [Parameter]
+        public string? TargetEmptyText { get; set; }
+
+        /// <summary>
+        /// Gets or sets the empty template shown when a list has no items.
+        /// </summary>
+        /// <value>The empty template.</value>
+        [Parameter]
+        public RenderFragment? EmptyTemplate { get; set; }
+
+        /// <summary>
+        /// Gets or sets the empty template shown when the source list has no items. Overrides <see cref="EmptyTemplate"/>.
+        /// </summary>
+        /// <value>The source empty template.</value>
+        [Parameter]
+        public RenderFragment? SourceEmptyTemplate { get; set; }
+
+        /// <summary>
+        /// Gets or sets the empty template shown when the target list has no items. Overrides <see cref="EmptyTemplate"/>.
+        /// </summary>
+        /// <value>The target empty template.</value>
+        [Parameter]
+        public RenderFragment? TargetEmptyTemplate { get; set; }
 
         /// <summary>
         /// Gets or sets the row render callback. Use it to set row attributes.
         /// </summary>
         /// <value>The row render callback.</value>
         [Parameter]
-        public Action<PickListItemRenderEventArgs<TItem>> ItemRender { get; set; }
+        public Action<PickListItemRenderEventArgs<TItem>>? ItemRender { get; set; }
 
-        void OnSourceItemRender(ListBoxItemRenderEventArgs<object> args)
+        void OnSourceItemRender(ListBoxItemRenderEventArgs<object?> args)
         {
             if (ItemRender != null)
             {
@@ -139,7 +262,7 @@ namespace Radzen.Blazor
             }
         }
 
-        void OnTargetItemRender(ListBoxItemRenderEventArgs<object> args)
+        void OnTargetItemRender(ListBoxItemRenderEventArgs<object?> args)
         {
             if (ItemRender != null)
             {
@@ -152,7 +275,41 @@ namespace Radzen.Blazor
             }
         }
 
-        private RenderFragment<dynamic> ListBoxTemplate => Template != null ? item => Template((TItem)item) : null;
+        private RenderFragment<dynamic>? SourceListBoxTemplate
+        {
+            get
+            {
+                if (SourceTemplate != null)
+                {
+                    return item => SourceTemplate(item);
+                }
+
+                if (Template != null)
+                {
+                    return item => Template(item);
+                }
+
+                return null;
+            }
+        }
+
+        private RenderFragment<dynamic>? TargetListBoxTemplate
+        {
+            get
+            {
+                if (TargetTemplate != null)
+                {
+                    return item => TargetTemplate(item);
+                }
+
+                if (Template != null)
+                {
+                    return item => Template(item);
+                }
+
+                return null;
+            }
+        }
 
         /// <summary>
         /// Gets or sets value if filtering is allowed.
@@ -173,7 +330,7 @@ namespace Radzen.Blazor
         /// </summary>
         /// <value>The buttons spacing.</value>
         [Parameter]
-        public string ButtonGap { get; set; }
+        public string? ButtonGap { get; set; }
 
         /// <summary>
         /// Gets or sets the orientation
@@ -217,33 +374,41 @@ namespace Radzen.Blazor
         [Parameter]
         public ButtonSize ButtonSize { get; set; } = ButtonSize.Medium;
 
+        private string? sourceToTargetTitle;
+
         /// <summary>
         /// Gets or sets the source to target title
         /// </summary>
         /// <value>The source to target title.</value>
         [Parameter]
-        public string SourceToTargetTitle { get; set; } = "Move all items from source to target collection";
+        public string SourceToTargetTitle { get => sourceToTargetTitle ?? Localize(nameof(RadzenStrings.PickList_SourceToTargetTitle)); set => sourceToTargetTitle = value; }
+
+        private string? selectedSourceToTargetTitle;
 
         /// <summary>
         /// Gets or sets the selected source to target title
         /// </summary>
         /// <value>The selected source to target title.</value>
         [Parameter]
-        public string SelectedSourceToTargetTitle { get; set; } = "Move all selected source items to target collection";
+        public string SelectedSourceToTargetTitle { get => selectedSourceToTargetTitle ?? Localize(nameof(RadzenStrings.PickList_SelectedSourceToTargetTitle)); set => selectedSourceToTargetTitle = value; }
+
+        private string? targetToSourceTitle;
 
         /// <summary>
         /// Gets or sets the target to source title
         /// </summary>
         /// <value>The target to source title.</value>
         [Parameter]
-        public string TargetToSourceTitle { get; set; } = "Move all items from target to source collection";
+        public string TargetToSourceTitle { get => targetToSourceTitle ?? Localize(nameof(RadzenStrings.PickList_TargetToSourceTitle)); set => targetToSourceTitle = value; }
+
+        private string? selectedTargetToSourceTitle;
 
         /// <summary>
         /// Gets or sets the selected target to source  title
         /// </summary>
         /// <value>The selected target to source title.</value>
         [Parameter]
-        public string SelectedTargetToSourceTitle { get; set; } = "Move selected target items to source collection";
+        public string SelectedTargetToSourceTitle { get => selectedTargetToSourceTitle ?? Localize(nameof(RadzenStrings.PickList_SelectedTargetToSourceTitle)); set => selectedTargetToSourceTitle = value; }
 
         /// <summary>
         /// Gets or sets the source to target icon
@@ -276,9 +441,9 @@ namespace Radzen.Blazor
         /// <summary>
         /// Gets the final CSS style rendered by the component. Combines it with a <c>style</c> custom attribute.
         /// </summary>
-        protected string GetStyle()
+        protected string? GetStyle()
         {
-            if (Attributes != null && Attributes.TryGetValue("style", out var style) && !string.IsNullOrEmpty(Convert.ToString(@style)))
+            if (Attributes != null && Attributes.TryGetValue("style", out var style) && !string.IsNullOrEmpty(Convert.ToString(@style, CultureInfo.InvariantCulture)))
             {
                 return $"{Style} {@style}";
             }
@@ -297,9 +462,9 @@ namespace Radzen.Blazor
         /// </summary>
         /// <value>The source collection.</value>
         [Parameter]
-        public IEnumerable<TItem> Source { get; set; }
+        public IEnumerable<TItem>? Source { get; set; }
 
-        IEnumerable<TItem> source;
+        IEnumerable<TItem>? source;
 
         /// <summary>
         /// Gets or sets the source changed.
@@ -313,9 +478,9 @@ namespace Radzen.Blazor
         /// </summary>
         /// <value>The target collection.</value>
         [Parameter]
-        public IEnumerable<TItem> Target { get; set; }
+        public IEnumerable<TItem>? Target { get; set; }
 
-        IEnumerable<TItem> target;
+        IEnumerable<TItem>? target;
 
         /// <summary>
         /// Gets or sets the target changed.
@@ -324,11 +489,45 @@ namespace Radzen.Blazor
         [Parameter]
         public EventCallback<IEnumerable<TItem>> TargetChanged { get; set; }
 
-        object selectedSourceItems;
-        object selectedTargetItems;
+        /// <summary>
+        /// Gets or sets the callback that is invoked when the selected source items change.
+        /// </summary>
+        /// <value>The selected source items changed callback.</value>
+        [Parameter]
+        public EventCallback<IEnumerable<TItem>> SelectedSourceChanged { get; set; }
 
-        string sourceSearchText;
-        string targetSearchText;
+        /// <summary>
+        /// Gets or sets the callback that is invoked when the selected target items change.
+        /// </summary>
+        /// <value>The selected target items changed callback.</value>
+        [Parameter]
+        public EventCallback<IEnumerable<TItem>> SelectedTargetChanged { get; set; }
+
+        /// <summary>
+        /// Gets or sets the callback that is invoked when items are moved between the source and target collections.
+        /// Fires after <see cref="SourceChanged"/> and <see cref="TargetChanged"/>, so the bound collections already reflect the move.
+        /// </summary>
+        /// <value>The move callback.</value>
+        [Parameter]
+        public EventCallback<PickListMoveEventArgs<TItem>> Move { get; set; }
+
+        object? selectedSourceItems;
+        object? selectedTargetItems;
+
+        async Task OnSelectedSourceItemsChanged(object value)
+        {
+            selectedSourceItems = value;
+            await SelectedSourceChanged.InvokeAsync(GetSelectedSources());
+        }
+
+        async Task OnSelectedTargetItemsChanged(object value)
+        {
+            selectedTargetItems = value;
+            await SelectedTargetChanged.InvokeAsync(GetSelectedTargets());
+        }
+
+        string? sourceSearchText;
+        string? targetSearchText;
 
         /// <summary>
         /// Set parameters as an asynchronous operation.
@@ -356,52 +555,92 @@ namespace Radzen.Blazor
             }
 
             await base.SetParametersAsync(parameters);
+
+            if (EditContext != null)
+            {
+                if (SourceExpression != null && sourceFieldIdentifier == null)
+                {
+                    sourceFieldIdentifier = FieldIdentifier.Create(SourceExpression);
+                }
+
+                if (TargetExpression != null && targetFieldIdentifier == null)
+                {
+                    targetFieldIdentifier = FieldIdentifier.Create(TargetExpression);
+                }
+            }
         }
 
         /// <summary>
         /// Returns a collection of TItem that are selected in the source list.
         /// </summary>
         /// <returns></returns>
-        public IEnumerable<TItem> GetSelectedSources()
-        {
-            return Multiple ? (selectedSourceItems as IEnumerable)?.Cast<TItem>() : [(TItem)selectedSourceItems];
-        }
+        public IEnumerable<TItem> GetSelectedSources() => GetSelectedItems(selectedSourceItems, source);
 
         /// <summary>
         /// Returns a collection of TItem that are selected in the target list.
         /// </summary>
         /// <returns></returns>
-        public IEnumerable<TItem> GetSelectedTargets()
+        public IEnumerable<TItem> GetSelectedTargets() => GetSelectedItems(selectedTargetItems, target);
+
+        IEnumerable<TItem> GetSelectedItems(object? selectedItems, IEnumerable<TItem>? data)
         {
-            return Multiple ? (selectedTargetItems as IEnumerable)?.Cast<TItem>() : [(TItem)selectedTargetItems];
+            if (selectedItems == null)
+            {
+                return Enumerable.Empty<TItem>();
+            }
+
+            var selected = Multiple
+                ? (selectedItems as IEnumerable)?.Cast<object?>().ToList() ?? new List<object?>()
+                : new List<object?> { selectedItems };
+
+            if (selected.Count > 0 && selected.All(o => o is TItem))
+            {
+                return selected.Cast<TItem>();
+            }
+
+            if (!string.IsNullOrEmpty(ValueProperty) && data != null)
+            {
+                var selectedValues = new HashSet<object?>(selected);
+                return data.Where(item => selectedValues.Contains(PropertyAccess.GetValue(item, ValueProperty)));
+            }
+
+            return Enumerable.Empty<TItem>();
         }
 
-        private async Task Update(bool sourceToTarget, IEnumerable<TItem> items)
+        RadzenListBox<object>? sourceListBox;
+        RadzenListBox<object>? targetListBox;
+        private async Task Update(bool sourceToTarget, IEnumerable<TItem>? items)
         {
+            IEnumerable<TItem> movedItems;
+
             if (sourceToTarget)
             {
                 if (items != null)
                 {
-                    target = (target ?? Enumerable.Empty<TItem>()).Concat(items);
-                    source = (source ?? Enumerable.Empty<TItem>()).Except(items);
+                    movedItems = items as IList<TItem> ?? items.ToList();
+                    target = (target ?? Enumerable.Empty<TItem>()).Concat(movedItems);
+                    source = (source ?? Enumerable.Empty<TItem>()).Except(movedItems);
                 }
                 else
                 {
-                    target = (target ?? Enumerable.Empty<TItem>()).Concat(source);
-                    source = null;
+                    movedItems = (MoveFilteredItemsOnlyOnMoveAll ? sourceListBox?.GetView()?.Cast<TItem>() ?? Enumerable.Empty<TItem>() : source ?? Enumerable.Empty<TItem>()).ToList();
+                    target = (target ?? Enumerable.Empty<TItem>()).Concat(movedItems);
+                    source = MoveFilteredItemsOnlyOnMoveAll && source != null ? source.Except(movedItems) : null;
                 }
             }
             else
             {
                 if (items != null)
                 {
-                    source = (source ?? Enumerable.Empty<TItem>()).Concat(items);
-                    target = (target ?? Enumerable.Empty<TItem>()).Except(items);
+                    movedItems = items as IList<TItem> ?? items.ToList();
+                    source = (source ?? Enumerable.Empty<TItem>()).Concat(movedItems);
+                    target = (target ?? Enumerable.Empty<TItem>()).Except(movedItems);
                 }
                 else
                 {
-                    source = (source ?? Enumerable.Empty<TItem>()).Concat(target);
-                    target = null;
+                    movedItems = (MoveFilteredItemsOnlyOnMoveAll ? targetListBox?.GetView()?.Cast<TItem>() ?? Enumerable.Empty<TItem>() : target ?? Enumerable.Empty<TItem>()).ToList();
+                    source = (source ?? Enumerable.Empty<TItem>()).Concat(movedItems);
+                    target = MoveFilteredItemsOnlyOnMoveAll && target != null ? target.Except(movedItems) : null;
                 }
             }
 
@@ -411,10 +650,32 @@ namespace Radzen.Blazor
             await SourceChanged.InvokeAsync(source);
             await TargetChanged.InvokeAsync(target);
 
+            if (Move.HasDelegate)
+            {
+                await Move.InvokeAsync(new PickListMoveEventArgs<TItem>
+                {
+                    MoveDirectionToTarget = sourceToTarget,
+                    Items = movedItems,
+                });
+            }
+
+            if (EditContext != null)
+            {
+                if (sourceFieldIdentifier.HasValue)
+                {
+                    EditContext.NotifyFieldChanged(sourceFieldIdentifier.Value);
+                }
+
+                if (targetFieldIdentifier.HasValue)
+                {
+                    EditContext.NotifyFieldChanged(targetFieldIdentifier.Value);
+                }
+            }
+
             selectedSourceItems = null;
             selectedTargetItems = null;
 
-            if (items == null)
+            if (items == null && !MoveFilteredItemsOnlyOnMoveAll)
             {
                 sourceSearchText = null;
                 targetSearchText = null;

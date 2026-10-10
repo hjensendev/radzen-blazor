@@ -1,12 +1,9 @@
-﻿@page "/buttons"
 @page "/button"
-@page "/docs/guides/components/button.html"
-
 <RadzenText TextStyle="TextStyle.H2" TagName="TagName.H1" class="rz-pt-8">
-    Button
+    Blazor Button
 </RadzenText>
 <RadzenText TextStyle="TextStyle.Subtitle1" TagName="TagName.P" class="rz-pb-4">
-    Demonstration and configuration of the Radzen Blazor <strong>Button</strong> component.
+    The Radzen Blazor Button comes in filled, flat, outlined, and text variants, with sizes, icons, shades, busy and disabled states, and click handling.
 </RadzenText>
 
 <RadzenText Anchor="buttons#filled-buttons" TextStyle="TextStyle.H5" TagName="TagName.H2" class="rz-pt-12">
@@ -63,17 +60,18 @@
     Button Sizes
 </RadzenText>
 <RadzenText TextStyle="TextStyle.Body1" class="rz-mb-8">
-    Use the <code>Size</code> property to set button size. Available sizes are ExtraSmall, Small, Medium (default), and Large.
+    Use the <code>Size</code> property to set button size. Available sizes are ExtraSmall, Small, Medium (default), and
+    Large.
 </RadzenText>
 <RadzenExample ComponentName="Button" Example="ButtonSizes">
     <ButtonSizes />
 </RadzenExample>
 
 <RadzenText Anchor="buttons#fab" TextStyle="TextStyle.H5" TagName="TagName.H2" class="rz-pt-12">
-    FAB
+    FAB-like button
 </RadzenText>
 <RadzenText TextStyle="TextStyle.Body1" class="rz-mb-8">
-    Floating action button.
+    See how you can achieve Floating action button look and feel. See also the standalone <RadzenLink Path="/fab" >RadzenFab</RadzenLink> and <RadzenLink Path="/fab-menu" >RadzenFabMenu</RadzenLink> components.
 </RadzenText>
 <RadzenExample ComponentName="Button" Example="ButtonFab">
     <ButtonFab />
@@ -103,16 +101,17 @@
     Keyboard Navigation
 </RadzenText>
 <RadzenText TextStyle="TextStyle.Body1" class="rz-mb-8">
-    The following keys or key combinations provide a way for users to navigate and interact with Radzen Blazor Button component.
+    The following keys or key combinations provide a way for users to navigate and interact with Radzen Blazor Button
+    component.
 </RadzenText>
 
 <KeyboardNavigationDataGrid Data="@shortcuts" />
 
 @code {
     public List<KeyboardShortcut> shortcuts = new()
-    {
-        new KeyboardShortcut { Key = "Tab", Action = "Navigate to a button." },
-        new KeyboardShortcut { Key = "Enter", Action = "Click the focused button." },
-        new KeyboardShortcut { Key = "Space", Action = "Click the focused button." }
-    };
+{
+new KeyboardShortcut { Key = "Tab", Action = "Navigate to a button." },
+new KeyboardShortcut { Key = "Enter", Action = "Click the focused button." },
+new KeyboardShortcut { Key = "Space", Action = "Click the focused button." }
+};
 }

@@ -27,6 +27,7 @@ $panel-menu-item-2nd-level-margin-block: 0 !default;
 $panel-menu-item-2nd-level-margin-inline: 0 !default;
 $panel-menu-item-2nd-level-border-radius: 0 !default;
 $panel-menu-item-2nd-level-offset: 2.75rem !default;
+$panel-menu-item-nested-offset: 1rem !default;
 $panel-menu-item-2nd-level-font-size: var(--rz-body-font-size) !default;
 $panel-menu-item-2nd-level-font-weight: 400 !default;
 $panel-menu-item-2nd-level-color: inherit !default;
@@ -85,11 +86,16 @@ $panel-menu-toggle-icon-opacity: 1 !default;
     margin-block: var(--rz-panel-menu-item-margin-block);
     margin-inline: var(--rz-panel-menu-item-margin-inline);
   }
-  
+
   .rz-navigation-item {
     border-block-end: var(--rz-panel-menu-item-border);
     border-radius: var(--rz-panel-menu-item-border-radius);
     overflow: hidden;
+
+    /* Do not show expand arrow if there are no child items */
+    &:not(.rz-navigation-item-expandable):not(:has(> .rz-expander .rz-navigation-item)) > .rz-navigation-item-wrapper .rz-navigation-item-icon-children {
+      display: none;
+    }
   }
 
   .rz-navigation-item-wrapper {
@@ -149,6 +155,16 @@ $panel-menu-toggle-icon-opacity: 1 !default;
     font-size: var(--rz-panel-menu-toggle-icon-font-size);
     opacity: var(--rz-panel-menu-toggle-icon-opacity);
     z-index: 1;
+
+    &.rz-state-expanded {
+      transform: rotate(180deg);
+      transition: transform var(--rz-expander-transition);
+    }
+
+    &.rz-state-collapsed {
+      transform: rotate(0);
+      transition: transform var(--rz-expander-transition);
+    }
   }
 
   .rz-navigation-item-icon {
@@ -158,6 +174,32 @@ $panel-menu-toggle-icon-opacity: 1 !default;
     margin-inline: var(--rz-panel-menu-icon-margin-inline);
     font-size: var(--rz-panel-menu-icon-font-size);
     transition: var(--rz-panel-menu-item-transition);
+  }
+
+  /* Stacked (NavigationRail) style - applies to first-level items only */
+  &.rz-panel-menu-stacked > .rz-navigation-item > .rz-navigation-item-wrapper {
+    .rz-navigation-item-link {
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .rz-navigation-item-text {
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .rz-navigation-item-icon {
+      margin-inline: 0;
+    }
+
+    .rz-navigation-item-icon-children {
+      position: absolute;
+      inset-block-start: 0.25rem;
+      inset-inline-end: 0.25rem;
+      margin-inline-start: 0;
+    }
   }
 
   /* Second level items */
@@ -219,7 +261,7 @@ $panel-menu-toggle-icon-opacity: 1 !default;
       .rz-navigation-item-link {
         padding-block: var(--rz-panel-menu-item-2nd-level-padding-block);
         padding-inline: var(--rz-panel-menu-item-2nd-level-padding-inline);
-        padding-inline-start: var(--rz-panel-menu-item-2nd-level-offset);
+        padding-inline-start: calc(var(--rz-panel-menu-item-2nd-level-offset) + (var(--rz-navigation-item-level, 2) - 2) * var(--rz-panel-menu-item-nested-offset));
       }
     }
 

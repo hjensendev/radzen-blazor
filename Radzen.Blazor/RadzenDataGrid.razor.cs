@@ -1,64 +1,153 @@
-﻿using Microsoft.AspNetCore.Components;
+using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.Forms;
 using Microsoft.AspNetCore.Components.Web;
 using Microsoft.JSInterop;
+using Radzen.Blazor.Rendering;
 using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Collections.Specialized;
+using System.Diagnostics.CodeAnalysis;
+using System.Globalization;
 using System.Linq;
+using System.Linq.Dynamic.Core;
 using System.Text.Json;
 using System.Threading.Tasks;
 
 namespace Radzen.Blazor
 {
     /// <summary>
-    /// RadzenDataGrid component.
+    /// A powerful data grid component for displaying and manipulating tabular data with support for sorting, filtering, paging, grouping, editing, and selection.
+    /// RadzenDataGrid provides a full-featured table with inline editing, master-detail views, virtualization, export capabilities, and extensive customization options.
+    /// Supports single/multiple column sorting, simple/advanced filtering, grouping with aggregation, inline/cell editing with validation, and single/multiple row selection with checkbox columns.
+    /// Features on-demand data loading via LoadData event for server-side operations, export to Excel and CSV formats, column/row templates, group headers/footers, and density modes (Default/Compact) for responsive layouts.
+    /// The grid can work with in-memory collections or load data on-demand from APIs.
+    /// Columns are defined using RadzenDataGridColumn components within the Columns template.
     /// </summary>
-    /// <typeparam name="TItem">The type of the DataGrid data item.</typeparam>
+    /// <typeparam name="TItem">The type of data items displayed in the grid. Each row represents one instance of TItem.</typeparam>
     /// <example>
+    /// Basic data grid with sorting, paging, and filtering:
     /// <code>
-    /// &lt;RadzenDataGrid @data=@orders TItem="Order" AllowSorting="true" AllowPaging="true" AllowFiltering="true"&gt;
+    /// &lt;RadzenDataGrid Data=@orders TItem="Order" AllowSorting="true" AllowPaging="true" AllowFiltering="true" PageSize="10"&gt;
     ///     &lt;Columns&gt;
-    ///         &lt;RadzenDataGridColumn TItem="Order" Property="OrderId" Title="OrderId" /&gt;
-    ///         &lt;RadzenDataGridColumn TItem="Order" Property="OrderDate" Title="OrderDate" /&gt;
+    ///         &lt;RadzenDataGridColumn TItem="Order" Property="OrderId" Title="Order ID" /&gt;
+    ///         &lt;RadzenDataGridColumn TItem="Order" Property="OrderDate" Title="Order Date" FormatString="{0:d}" /&gt;
+    ///         &lt;RadzenDataGridColumn TItem="Order" Property="CustomerName" Title="Customer" /&gt;
+    ///         &lt;RadzenDataGridColumn TItem="Order" Property="Total" Title="Total" FormatString="{0:C}" /&gt;
     ///     &lt;/Columns&gt;
     /// &lt;/RadzenDataGrid&gt;
     /// </code>
+    /// Grid with inline editing:
+    /// <code>
+    /// &lt;RadzenDataGrid @ref=grid Data=@orders TItem="Order" EditMode="DataGridEditMode.Single"&gt;
+    ///     &lt;Columns&gt;
+    ///         &lt;RadzenDataGridColumn TItem="Order" Property="OrderId" Title="ID" Frozen="true"&gt;
+    ///             &lt;EditTemplate Context="order"&gt;
+    ///                 &lt;RadzenNumeric @bind-Value="order.OrderId" Style="width:100%" /&gt;
+    ///             &lt;/EditTemplate&gt;
+    ///         &lt;/RadzenDataGridColumn&gt;
+    ///         &lt;RadzenDataGridColumn TItem="Order" Context="order" Filterable="false" Sortable="false" TextAlign="TextAlign.Right"&gt;
+    ///             &lt;Template Context="order"&gt;
+    ///                 &lt;RadzenButton Icon="edit" ButtonStyle="ButtonStyle.Light" Click="@(args =&gt; EditRow(order))" /&gt;
+    ///             &lt;/Template&gt;
+    ///             &lt;EditTemplate Context="order"&gt;
+    ///                 &lt;RadzenButton Icon="check" ButtonStyle="ButtonStyle.Success" Click="@(args =&gt; SaveRow(order))" /&gt;
+    ///                 &lt;RadzenButton Icon="close" ButtonStyle="ButtonStyle.Light" Click="@(args =&gt; CancelEdit(order))" /&gt;
+    ///             &lt;/EditTemplate&gt;
+    ///         &lt;/RadzenDataGridColumn&gt;
+    ///     &lt;/Columns&gt;
+    /// &lt;/RadzenDataGrid&gt;
+    /// </code>
+    /// Server-side data with LoadData:
+    /// <code>
+    /// &lt;RadzenDataGrid Data=@orders TItem="Order" LoadData=@LoadData Count=@count IsLoading=@isLoading
+    ///                 AllowSorting="true" AllowFiltering="true" AllowPaging="true" PageSize="20"&gt;
+    ///     &lt;Columns&gt;
+    ///         &lt;RadzenDataGridColumn TItem="Order" Property="OrderId" Title="ID" /&gt;
+    ///     &lt;/Columns&gt;
+    /// &lt;/RadzenDataGrid&gt;
+    /// 
+    /// @code {
+    ///     IEnumerable&lt;Order&gt; orders;
+    ///     int count;
+    ///     bool isLoading;
+    /// 
+    ///     async Task LoadData(LoadDataArgs args)
+    ///     {
+    ///         isLoading = true;
+    ///         var result = await orderService.GetOrders(args.Skip, args.Top, args.OrderBy, args.Filter);
+    ///         orders = result.Data;
+    ///         count = result.Count;
+    ///         isLoading = false;
+    ///     }
+    /// }
+    /// </code>
     /// </example>
-#if NET6_0_OR_GREATER
     [CascadingTypeParameter(nameof(TItem))]
-#endif
-    public partial class RadzenDataGrid<TItem> : PagedDataBoundComponent<TItem>
+    [UnconditionalSuppressMessage(TrimMessages.Trimming, TrimMessages.IL2046, Justification = TrimMessages.DataTypePreserved)]
+    [UnconditionalSuppressMessage(TrimMessages.Trimming, TrimMessages.IL2055, Justification = TrimMessages.DataTypePreserved)]
+    [UnconditionalSuppressMessage(TrimMessages.Trimming, TrimMessages.IL2060, Justification = TrimMessages.DataTypePreserved)]
+    [UnconditionalSuppressMessage(TrimMessages.Trimming, TrimMessages.IL2067, Justification = TrimMessages.DataTypePreserved)]
+    [UnconditionalSuppressMessage(TrimMessages.Trimming, TrimMessages.IL2072, Justification = TrimMessages.DataTypePreserved)]
+    [UnconditionalSuppressMessage(TrimMessages.Trimming, TrimMessages.IL2075, Justification = TrimMessages.DataTypePreserved)]
+    [UnconditionalSuppressMessage(TrimMessages.Trimming, TrimMessages.IL2080, Justification = TrimMessages.DataTypePreserved)]
+    [UnconditionalSuppressMessage(TrimMessages.Trimming, TrimMessages.IL2091, Justification = TrimMessages.DataTypePreserved)]
+    public partial class RadzenDataGrid<
+        [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.PublicFields)] TItem> : PagedDataBoundComponent<TItem> where TItem : notnull
     {
+        private static readonly string[] DefaultGroupProperty = new string[] { "it" };
+
         /// <summary>
-        /// Returns the validity of the DataGrid.
+        /// Gets whether all inline edit validators in the DataGrid are currently valid.
+        /// Use this property to check validation state before saving edited rows.
         /// </summary>
-        /// <value><c>true</c> if all validators in the DataGrid a valid; otherwise, <c>false</c>.</value>
+        /// <value><c>true</c> if all edit form validators are valid; otherwise, <c>false</c>. Returns <c>true</c> if no rows are being edited.</value>
         public bool IsValid
         {
             get
             {
-                if (!editContexts.Any())
+                if (editContexts.Count == 0)
                 {
                     return true;
                 }
 
-                return editContexts.All(c => !c.Value.GetValidationMessages().Any());
+                return editContexts.All(c => 
+                { 
+                    c.Value.Validate();
+                    return !c.Value.GetValidationMessages().Any(); 
+                });
             }
         }
 
         /// <summary>
-        /// Gets or sets a value indicating whether this instance is virtualized.
+        /// Gets whether the filter row (containing filter input controls for each column) is currently visible in the DataGrid.
+        /// The filter row appears below the header row when filtering is enabled and at least one column is filterable.
         /// </summary>
-        /// <value><c>true</c> if this instance is virtualized; otherwise, <c>false</c>.</value>
+        /// <value><c>true</c> if AllowFiltering is enabled, FilterMode includes Simple mode, and at least one filterable column exists; otherwise, <c>false</c>.</value>
+        public bool FilterRowActive
+        {
+            get
+            {
+                return AllowFiltering && (columns.Where(c => c.GetVisible()).Any(c => c.FilterMode == FilterMode.Simple || c.FilterMode == FilterMode.SimpleWithMenu) || FilterMode == FilterMode.Simple || FilterMode == FilterMode.SimpleWithMenu) && columns.Where(column => column.Filterable && (!string.IsNullOrEmpty(column.GetFilterProperty()) || column.FilterTemplate != null)).Any();
+            }
+        }
+
+        /// <summary>
+        /// Gets or sets whether the DataGrid uses virtualization to improve performance with large datasets.
+        /// When enabled, only visible rows are rendered in the DOM, with additional rows loaded as the user scrolls.
+        /// Virtualization significantly reduces memory usage and initial render time for grids with thousands of rows.
+        /// </summary>
+        /// <value><c>true</c> to enable row virtualization; otherwise, <c>false</c>. Default is <c>false</c>.</value>
         [Parameter]
         public bool AllowVirtualization { get; set; }
 
         /// <summary>
-        /// Gets or sets a value that determines how many additional items will be rendered before and after the visible region. This help to reduce the frequency of rendering during scrolling. However, higher values mean that more elements will be present in the page.
+        /// Gets or sets the number of additional rows to render before and after the visible viewport when virtualization is enabled.
+        /// A higher overscan count reduces the chance of seeing blank space during fast scrolling, but increases the number of rendered elements.
+        /// The optimal value depends on row height and typical scroll speed.
         /// </summary>
+        /// <value>The number of extra rows to render outside the viewport. Default is 3 (determined by the Virtualize component).</value>
         [Parameter]
         public int VirtualizationOverscanCount { get; set; }
 
@@ -67,13 +156,16 @@ namespace Radzen.Blazor
             AllowVirtualization = allowVirtualization;
         }
 
-        internal Microsoft.AspNetCore.Components.Web.Virtualization.Virtualize<TItem> virtualize;
-        internal Microsoft.AspNetCore.Components.Web.Virtualization.Virtualize<GroupResult> groupVirtualize;
+        internal Microsoft.AspNetCore.Components.Web.Virtualization.Virtualize<TItem>? virtualize;
+        internal Microsoft.AspNetCore.Components.Web.Virtualization.Virtualize<GroupResult>? groupVirtualize;
 
         /// <summary>
-        /// Gets Virtualize component reference.
+        /// Gets a reference to the underlying Blazor Virtualize component used for row virtualization.
+        /// This reference can be used to programmatically control virtualization behavior or access virtualization state.
+        /// Only available when <see cref="AllowVirtualization"/> is enabled and items are not grouped.
         /// </summary>
-        public Microsoft.AspNetCore.Components.Web.Virtualization.Virtualize<TItem> Virtualize
+        /// <value>The Virtualize component reference, or null if virtualization is not active.</value>
+        public Microsoft.AspNetCore.Components.Web.Virtualization.Virtualize<TItem>? Virtualize
         {
             get
             {
@@ -83,9 +175,14 @@ namespace Radzen.Blazor
 
         List<TItem> virtualDataItems = new List<TItem>();
 
+        int virtualItemsStartIndex;
+
         /// <summary>
-        /// Clears the cache and refreshes the Virtualize component.
+        /// Clears the internal data cache and refreshes the DataGrid, reloading data from the source.
+        /// When virtualization is enabled, this method refreshes the Virtualize component. Otherwise, it triggers a standard reload.
+        /// Call this method after external data changes to ensure the grid displays current data.
         /// </summary>
+        /// <returns>A task representing the asynchronous refresh operation.</returns>
         public async Task RefreshDataAsync()
         {
             ResetLoadData();
@@ -101,15 +198,20 @@ namespace Radzen.Blazor
         }
 
         /// <summary>
-        /// Reset the LoadData internal state
+        /// Resets the internal LoadData state, forcing the next data operation to reload from the source.
+        /// This is useful when you've made changes to the underlying data source and want to ensure the next load operation fetches fresh data
+        /// instead of using cached arguments. Typically called before RefreshDataAsync or when manually managing data reload.
         /// </summary>
         public void ResetLoadData()
         {
             lastLoadDataArgs = null;
         }
 
-        string lastLoadDataArgs;
+        string? lastLoadDataArgs;
+        int lastLoadDataStart;
+        int lastLoadDataTop;
         Task lastLoadDataTask = Task.CompletedTask;
+        [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage(TrimMessages.Trimming, TrimMessages.IL2026, Justification = TrimMessages.DataTypePreserved)]
         private async ValueTask<Microsoft.AspNetCore.Components.Web.Virtualization.ItemsProviderResult<TItem>> LoadItems(Microsoft.AspNetCore.Components.Web.Virtualization.ItemsProviderRequest request)
         {
             var view = AllowPaging ? PagedView : View;
@@ -131,13 +233,16 @@ namespace Radzen.Blazor
                 lastLoadDataArgs = loadDataArgs;
             }
 
-            var totalItemsCount = LoadData.HasDelegate ? Count : view.Count();
+            var totalItemsCount = (LoadData.HasDelegate ? Count : view.Count()) + itemsToInsert.Count;
 
-            virtualDataItems = (LoadData.HasDelegate ? Data : itemsToInsert.Count() > 0 ? itemsToInsert.ToList().Concat(view.Skip(request.StartIndex).Take(top)) : view.Skip(request.StartIndex).Take(top))?.ToList();
+            virtualDataItems = (LoadData.HasDelegate ? (itemsToInsert.Count > 0 ? itemsToInsert.ToList().Concat(Data ?? Enumerable.Empty<TItem>()) : Data) : itemsToInsert.Count > 0 ? itemsToInsert.ToList().Concat(view.Skip(request.StartIndex).Take(top)) : view.Skip(request.StartIndex).Take(top))?.ToList() ?? new List<TItem>();
+
+            virtualItemsStartIndex = request.StartIndex;
 
             return new Microsoft.AspNetCore.Components.Web.Virtualization.ItemsProviderResult<TItem>(virtualDataItems, totalItemsCount);
         }
 
+        [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage(TrimMessages.Trimming, TrimMessages.IL2026, Justification = TrimMessages.DataTypePreserved)]
         private async ValueTask<Microsoft.AspNetCore.Components.Web.Virtualization.ItemsProviderResult<GroupResult>> LoadGroups(Microsoft.AspNetCore.Components.Web.Virtualization.ItemsProviderRequest request)
         {
             var top = request.Count;
@@ -156,7 +261,7 @@ namespace Radzen.Blazor
             if (Groups.Any())
             {
                 query = view.AsQueryable().OrderBy(Groups.Any() ? string.Join(',', Groups.Select(g => g.Property)) : null);
-                _groupedPagedView = await Task.FromResult(query.GroupByMany(Groups.Any() ? Groups.Select(g => g.Property).ToArray() : new string[] { "it" }).ToList());
+                _groupedPagedView = await Task.FromResult(query.GroupByMany(Groups.Any() ? Groups.Select(g => g.Property).ToArray() : DefaultGroupProperty).ToList());
 
                 totalItemsCount = await Task.FromResult(_groupedPagedView.Count());
             }
@@ -210,10 +315,10 @@ namespace Radzen.Blazor
                                 b.AddAttribute(8, "InEditMode", IsRowInEditMode(context));
                                 b.AddAttribute(9, "Index", virtualDataItems.IndexOf(context));
 
-                                if (editContexts.Keys.Any(i => ItemEquals(i, context)))
-                                {
-                                    b.AddAttribute(10, nameof(RadzenDataGridRow<TItem>.EditContext), editContexts[context]);
-                                }
+                                // Always supply the value because omitted parameters retain their previous value.
+                                editContexts.TryGetValue(context, out EditContext? editContext);
+
+                                b.AddAttribute(10, nameof(RadzenDataGridRow<TItem>.EditContext), editContext);
 
                                 b.SetKey(context);
                                 b.CloseComponent();
@@ -265,10 +370,10 @@ namespace Radzen.Blazor
                     builder.AddAttribute(5, "Item", item);
                     builder.AddAttribute(6, "InEditMode", IsRowInEditMode(item));
 
-                    if (editContexts.ContainsKey(item))
-                    {
-                        builder.AddAttribute(7, nameof(RadzenDataGridRow<TItem>.EditContext), editContexts[item]);
-                    }
+                    // Always supply the value because omitted parameters retain their previous value.
+                    editContexts.TryGetValue(item, out EditContext? editContext);
+
+                    builder.AddAttribute(7, nameof(RadzenDataGridRow<TItem>.EditContext), editContext);
 
                     builder.SetKey(item);
 
@@ -293,26 +398,32 @@ namespace Radzen.Blazor
         [Parameter]
         public EventCallback<Radzen.DataGridLoadChildDataEventArgs<TItem>> LoadChildData { get; set; }
 
+        private string? expandChildItemAriaLabel;
+
         /// <summary>
         /// Gets or sets the expand child item aria label text.
         /// </summary>
         /// <value>The expand child item aria label text.</value>
         [Parameter]
-        public string ExpandChildItemAriaLabel { get; set; } = "Expand child item";
+        public string? ExpandChildItemAriaLabel { get => expandChildItemAriaLabel ?? Localize(nameof(RadzenStrings.DataGrid_ExpandChildItemAriaLabel)); set => expandChildItemAriaLabel = value; }
+
+        private string? expandGroupAriaLabel;
 
         /// <summary>
         /// Gets or sets the expand group aria label text.
         /// </summary>
         /// <value>The expand group aria label text.</value>
         [Parameter]
-        public string ExpandGroupAriaLabel { get; set; } = "Expand group";
+        public string? ExpandGroupAriaLabel { get => expandGroupAriaLabel ?? Localize(nameof(RadzenStrings.DataGrid_ExpandGroupAriaLabel)); set => expandGroupAriaLabel = value; }
+
+        private string? filterToggleAriaLabel;
 
         /// <summary>
         /// Gets or sets the date simple filter toggle aria label text.
         /// </summary>
         /// <value>The date simple filter toggle aria label text.</value>
         [Parameter]
-        public string FilterToggleAriaLabel { get; set; } = "Toggle";
+        public string? FilterToggleAriaLabel { get => filterToggleAriaLabel ?? Localize(nameof(RadzenStrings.DataGrid_FilterToggleAriaLabel)); set => filterToggleAriaLabel = value; }
 
         /// <summary>
         /// Gets or sets a value indicating whether DataGrid data cells will follow the header cells structure in composite columns.
@@ -346,16 +457,17 @@ namespace Radzen.Blazor
         /// Enum filters.
         /// </summary>
         [Parameter]
-        public Func<string, string> EnumFilterTranslationFunc { get; set; }
+        public Func<string, string>? EnumFilterTranslationFunc { get; set; }
 
         /// <summary>
         /// The grouped and paged View
         /// </summary>
-        IEnumerable<GroupResult> _groupedPagedView;
+        IEnumerable<GroupResult>? _groupedPagedView;
         /// <summary>
         /// Gets the view grouped and paged.
         /// </summary>
         /// <value>The grouped paged view.</value>
+        [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage(TrimMessages.Trimming, TrimMessages.IL2026, Justification = TrimMessages.DataTypePreserved)]
         public IEnumerable<GroupResult> GroupedPagedView
         {
             get
@@ -396,7 +508,7 @@ namespace Radzen.Blazor
         [Parameter]
         public EventCallback<DataGridColumnGroupEventArgs<TItem>> Group { get; set; }
 
-        internal string getFrozenColumnClass(RadzenDataGridColumn<TItem> column, IList<RadzenDataGridColumn<TItem>> visibleColumns)
+        internal string getFrozenColumnClass(RadzenDataGridColumn<TItem> column)
         {
             if (!column.IsFrozen())
             {
@@ -468,7 +580,7 @@ namespace Radzen.Blazor
 
         internal string getColumnAlignClass(RadzenDataGridColumn<TItem> column)
         {
-            return $"rz-text-align-{column.TextAlign.ToString().ToLower()}";
+            return $"rz-text-align-{column.TextAlign.ToString().ToLower(CultureInfo.InvariantCulture)}";
         }
 
         /// <summary>
@@ -479,27 +591,57 @@ namespace Radzen.Blazor
         /// <returns>System.String.</returns>
         protected string DateFilterOperatorStyle(RadzenDataGridColumn<TItem> column, FilterOperator value)
         {
+            ArgumentNullException.ThrowIfNull(column);
+
             return column.GetFilterOperator() == value ?
                 "rz-listbox-item  rz-state-highlight" :
                 "rz-listbox-item ";
         }
 
         bool preventKeyDown = true;
-        int focusedIndex = -1;
-        int focusedCellIndex = 0;
+        bool stopKeydownPropagation;
 
-        internal string GridId()
+        int focusedIndex = -1;
+        int focusedCellIndex;
+
+        internal Func<bool>? HasActiveDescendant { get; set; }
+
+        bool hasActiveRow;
+
+        internal string? GetActiveDescendantId()
+        {
+            if (HasActiveDescendant != null)
+            {
+                return HasActiveDescendant() ? $"{GetId()}-active-item" : null;
+            }
+
+            return hasActiveRow ? $"{GetId()}-active-item" : null;
+        }
+
+        internal string? GridId()
         {
             return GetId();
         }
+
+        /// <summary>
+        /// Gets or sets the tabindex applied to the grid element. Set to <c>0</c> by default so the grid is a tab stop.
+        /// Embedding components can set it to <c>-1</c> to remove the grid from the tab order.
+        /// </summary>
+        /// <value>The tabindex of the grid element.</value>
+        [Parameter]
+        public int TabIndex { get; set; }
 
         async Task FocusRow(string key)
         {
             try
             {
-                var result = await JSRuntime.InvokeAsync<int[]>("Radzen.focusTableRow", UniqueID, key, focusedIndex, focusedCellIndex, IsVirtualizationAllowed());
-                focusedIndex = result[0];
-                focusedCellIndex = result[1];
+                if (JSRuntime != null)
+                {
+                    var result = await JSRuntime.InvokeAsync<int[]>("Radzen.focusTableRow", UniqueID, key, focusedIndex, focusedCellIndex, IsVirtualizationAllowed());
+                    focusedIndex = result[0];
+                    focusedCellIndex = result[1];
+                    hasActiveRow = true;
+                }
             }
             catch (Exception)
             {
@@ -515,11 +657,24 @@ namespace Radzen.Blazor
         public EventCallback<KeyboardEventArgs> KeyDown { get; set; }
 
         /// <summary>
-        /// Handles the <see cref="E:KeyDown" /> event.
+        /// Handles the blur event.
+        /// </summary>
+        /// <param name="args">The <see cref="FocusEventArgs"/> instance containing the event data.</param>
+        protected virtual async Task OnBlur(FocusEventArgs args)
+        {
+            if (JSRuntime != null)
+            {
+                await JSRuntime.InvokeVoidAsync("Radzen.clearFocusedHeaderCell", UniqueID);
+            }
+        }
+
+        /// <summary>
+        /// Handles the key down event.
         /// </summary>
         /// <param name="args">The <see cref="KeyboardEventArgs"/> instance containing the event data.</param>
         protected virtual async Task OnKeyDown(KeyboardEventArgs args)
         {
+            ArgumentNullException.ThrowIfNull(args);
             await KeyDown.InvokeAsync(args);
 
             var key = args.Code != null ? args.Code : args.Key;
@@ -527,8 +682,9 @@ namespace Radzen.Blazor
             if (key == "ArrowDown" || key == "ArrowUp" || key == "ArrowLeft" || key == "ArrowRight")
             {
                 preventKeyDown = true;
+                stopKeydownPropagation = true;
 
-                if (focusedIndex == 0 && AllowFiltering && FilterMode == FilterMode.Advanced && key == "ArrowDown" && args.AltKey)
+                if (focusedIndex == 0 && AllowFiltering && (FilterMode == FilterMode.Advanced || FilterMode == FilterMode.CheckBoxList) && key == "ArrowDown" && args.AltKey)
                 {
                     var column = ColumnsCollection.Where(c => c.GetVisible()).ElementAtOrDefault(focusedCellIndex);
                     if (column != null && column.headerCell != null && column.Filterable)
@@ -537,18 +693,42 @@ namespace Radzen.Blazor
                     }
                     return;
                 }
+                else if ((Template != null || LoadChildData.HasDelegate) && (key == "ArrowLeft" || key == "ArrowRight"))
+                {
+                    var pagedViewIndex = focusedIndex - 1;
+                    if (FilterRowActive)
+                    {
+                        pagedViewIndex = pagedViewIndex - 1;
+                    }
+                    var item = PagedView.ElementAtOrDefault(pagedViewIndex);
+                    if (item != null)
+                    {
+                        if (key == "ArrowLeft")
+                        {
+                            await CollapseItem(item);
+                            return;
+                        }
+                        else if (key == "ArrowRight")
+                        {
+                            await ExpandItem(item);
+                            return;
+                        }
+                    }
+                }
 
                 await FocusRow(key);
             }
-            else if (IsVirtualizationAllowed() && (key == "PageUp" || key == "PageDown" || key == "Home" || key == "End"))
+            else if (key == "PageUp" || key == "PageDown" || key == "Home" || key == "End")
             {
                 preventKeyDown = true;
+                stopKeydownPropagation = true;
 
                 await FocusRow(key);
             }
             else if (key == "Space" || key == "Enter")
             {
                 preventKeyDown = true;
+                stopKeydownPropagation = true;
 
                 if (focusedIndex == 0)
                 {
@@ -560,7 +740,12 @@ namespace Radzen.Blazor
                 }
                 else
                 {
-                    var itemToSelect = PagedView.ElementAtOrDefault(focusedIndex - 1);
+                    var pagedViewIndex = focusedIndex - 1;
+                    if (FilterRowActive)
+                    {
+                        pagedViewIndex = pagedViewIndex - 1;
+                    }
+                    var itemToSelect = PagedView.ElementAtOrDefault(pagedViewIndex);
                     if (itemToSelect != null)
                     {
                         if (SelectionMode == DataGridSelectionMode.Multiple && !args.ShiftKey)
@@ -574,8 +759,26 @@ namespace Radzen.Blazor
             }
             else
             {
+                // Nothing changed for a key the grid does not handle, so skip the re-render - holding a key repeats keydown.
+                skipKeyDownRender = !preventKeyDown && !stopKeydownPropagation && !KeyDown.HasDelegate;
+
                 preventKeyDown = false;
+                stopKeydownPropagation = false;
             }
+        }
+
+        bool skipKeyDownRender;
+
+        /// <inheritdoc />
+        protected override bool ShouldRender()
+        {
+            if (skipKeyDownRender)
+            {
+                skipKeyDownRender = false;
+                return false;
+            }
+
+            return !exporting && base.ShouldRender();
         }
 
         /// <summary>
@@ -585,17 +788,30 @@ namespace Radzen.Blazor
         /// <param name="column">The column.</param>
         protected virtual void OnFilterKeyPress(EventArgs args, RadzenDataGridColumn<TItem> column)
         {
-            Debounce(() => DebounceFilter(column), FilterDelay);
+            if (FilterAsYouType)
+            {
+                Debounce(() => DebounceFilter(column), FilterDelay);
+            }
+        }
+
+        EventCallback<KeyboardEventArgs> getFilterKeyDownHandler(RadzenDataGridColumn<TItem> column)
+        {
+            return FilterAsYouType ?
+                EventCallback.Factory.Create(this, new Action<KeyboardEventArgs>(args => OnFilterKeyPress(args, column)).AsNonRenderingEventHandler()) :
+                default;
         }
 
         async Task DebounceFilter(RadzenDataGridColumn<TItem> column)
         {
-            var inputValue = await JSRuntime.InvokeAsync<string>("Radzen.getInputValue", getFilterInputId(column));
-            if (!object.Equals(column.GetFilterValue(), inputValue))
+            if (JSRuntime != null)
             {
+                var inputValue = await JSRuntime.InvokeAsync<string>("Radzen.getInputValue", getFilterInputId(column));
+                if (!object.Equals(column.GetFilterValue(), inputValue))
+                {
 #pragma warning disable CS4014 // Because this call is not awaited, execution of the current method continues before the call is completed
-                await InvokeAsync(() => { OnFilter(new ChangeEventArgs() { Value = inputValue }, column); });
+                    await InvokeAsync(() => { OnFilter(new ChangeEventArgs() { Value = inputValue }, column); });
 #pragma warning restore CS4014 // Because this call is not awaited, execution of the current method continues before the call is completed
+                }
             }
         }
 
@@ -606,11 +822,12 @@ namespace Radzen.Blazor
         /// <param name="filterOperator">The filter operator.</param>
         protected void ApplyDateFilterByFilterOperator(RadzenDataGridColumn<TItem> column, FilterOperator filterOperator)
         {
+            ArgumentNullException.ThrowIfNull(column);
             column.SetFilterOperator(filterOperator);
             SaveSettings();
         }
 
-        internal IJSRuntime GetJSRuntime()
+        internal IJSRuntime? GetJSRuntime()
         {
             return JSRuntime;
         }
@@ -624,22 +841,37 @@ namespace Radzen.Blazor
         /// Gives the grid a custom header, allowing the adding of components to create custom tool bars in addtion to column grouping and column picker
         /// </summary>
         [Parameter]
-        public RenderFragment HeaderTemplate { get; set; }
+        public RenderFragment? HeaderTemplate { get; set; }
 
         /// <summary>
         /// Gives the grid a custom footer, allowing the adding of components to create custom tool bars or custom pagination
         /// </summary>
         [Parameter]
-        public RenderFragment FooterTemplate { get; set; }
+        public RenderFragment? FooterTemplate { get; set; }
 
-        internal object selectedColumns;
+        internal object? selectedColumns;
+
+        RadzenDropDownDataGrid<object>? columnPickerGrid;
+
+        IEnumerable<object> SelectedPickableColumns => selectedColumns as IEnumerable<object> ?? Enumerable.Empty<object>();
+
+        bool? AllColumnsPickerState => !SelectedPickableColumns.Any()
+            ? false
+            : SelectedPickableColumns.Count() >= allPickableColumns.Count ? true : (bool?)null;
+
+        async Task ToggleAllColumnsPicker()
+        {
+            var allSelected = SelectedPickableColumns.Count() >= allPickableColumns.Count;
+            selectedColumns = allSelected ? new List<object>() : allPickableColumns.Cast<object>().ToList();
+            await ToggleColumns();
+        }
 
         /// <summary>
         /// Gets or sets the columns.
         /// </summary>
         /// <value>The columns.</value>
         [Parameter]
-        public RenderFragment Columns { get; set; }
+        public RenderFragment? Columns { get; set; }
 
         internal void UpdateColumnsOrder()
         {
@@ -690,6 +922,8 @@ namespace Radzen.Blazor
                 allColumns.Add(column);
             }
 
+            ApplyGroupedColumnVisibility(column);
+
             if (AllowColumnPicking)
             {
                 selectedColumns = allColumns.Where(c => c.Pickable && c.GetVisible()).ToList();
@@ -704,7 +938,9 @@ namespace Radzen.Blazor
         internal void UpdatePickableColumn(RadzenDataGridColumn<TItem> column, bool visible)
         {
             if (selectedColumns == null)
+            {
                 return;
+            }
 
             var columnsList = ((IEnumerable<object>)selectedColumns).ToList();
             if (visible)
@@ -729,32 +965,25 @@ namespace Radzen.Blazor
         /// Updates pickable columns.
         /// </summary>
         public void UpdatePickableColumns()
-		{
-			if (allColumns.Any(c => c.Pickable))
-			{
-				if (AllowColumnPicking)
-				{
-					allPickableColumns = allColumns.Where(c => c.Pickable).OrderBy(c => c.GetOrderIndex()).ToList();
-				}
-			}
-		}
-
-		internal void RemoveColumn(RadzenDataGridColumn<TItem> column)
         {
-            if (columns.Contains(column))
+            if (allColumns.Any(c => c.Pickable))
             {
-                columns.Remove(column);
+                if (AllowColumnPicking)
+                {
+                    allPickableColumns = allColumns.Where(c => c.Pickable).OrderBy(c => c.GetOrderIndex()).ToList();
+                }
             }
+        }
 
-            if (childColumns.Contains(column))
-            {
-                childColumns.Remove(column);
-            }
+        internal void RemoveColumn(RadzenDataGridColumn<TItem> column)
+        {
+            columns.Remove(column);
 
-            if (allColumns.Contains(column))
-            {
-                allColumns.Remove(column);
-            }
+            childColumns.Remove(column);
+
+            allColumns.Remove(column);
+
+            groupedColumns.Remove(column);
 
             UpdateColumnsOrder();
 
@@ -764,8 +993,13 @@ namespace Radzen.Blazor
             }
         }
 
-        void ToggleColumns()
+        async Task ToggleColumns()
         {
+            if (selectedColumns == null)
+            {
+                selectedColumns = Array.Empty<RadzenDataGridColumn<TItem>>();
+            }
+
             var selected = ((IEnumerable<object>)selectedColumns).Cast<RadzenDataGridColumn<TItem>>();
 
             foreach (var c in allPickableColumns)
@@ -773,8 +1007,13 @@ namespace Radzen.Blazor
                 c.SetVisible(selected.Contains(c));
             }
 
-            PickedColumnsChanged.InvokeAsync(new DataGridPickedColumnsChangedEventArgs<TItem>() { Columns = selected });
+            await PickedColumnsChanged.InvokeAsync(new DataGridPickedColumnsChangedEventArgs<TItem>() { Columns = selected });
             SaveSettings();
+
+            if (QueryOnlyVisibleColumns)
+            {
+                await Reload();
+            }
         }
 
         /// <summary>
@@ -793,7 +1032,7 @@ namespace Radzen.Blazor
         {
             if (column != null && !string.IsNullOrEmpty(column.FormatString))
             {
-                return column.FormatString.Replace("{0:", "").Replace("}", "");
+                return column.FormatString.Replace("{0:", "", StringComparison.Ordinal).Replace("}", "", StringComparison.Ordinal);
             }
 
             return FilterDateFormat;
@@ -803,8 +1042,8 @@ namespace Radzen.Blazor
         {
             return new RenderFragment(builder =>
             {
-                var type = Nullable.GetUnderlyingType(column.FilterPropertyType) != null ?
-                    column.FilterPropertyType : typeof(Nullable<>).MakeGenericType(column.FilterPropertyType);
+                var type = column.FilterPropertyType != null && Nullable.GetUnderlyingType(column.FilterPropertyType) != null ?
+                    column.FilterPropertyType : (column.FilterPropertyType != null ? typeof(Nullable<>).MakeGenericType(column.FilterPropertyType) : typeof(object));
 
                 var numericType = typeof(RadzenNumeric<>).MakeGenericType(type);
 
@@ -826,11 +1065,16 @@ namespace Radzen.Blazor
                     action = args => { column.SetFilterValue(args, isFirst); SaveSettings(); };
                 }
 
-                var eventCallbackGenericCreate = typeof(NumericFilterEventCallback).GetMethod("Create").MakeGenericMethod(type);
-                var eventCallbackGenericAction = typeof(NumericFilterEventCallback).GetMethod("Action").MakeGenericMethod(type);
+                var createMethod = typeof(NumericFilterEventCallback).GetMethod("Create");
+                var actionMethod = typeof(NumericFilterEventCallback).GetMethod("Action");
+                if (createMethod != null && actionMethod != null)
+                {
+                    var eventCallbackGenericCreate = createMethod.MakeGenericMethod(type);
+                    var eventCallbackGenericAction = actionMethod.MakeGenericMethod(type);
 
-                builder.AddAttribute(3, "Change", eventCallbackGenericCreate.Invoke(this,
-                    new object[] { this, eventCallbackGenericAction.Invoke(this, new object[] { action }) }));
+                    builder.AddAttribute(3, "Change", eventCallbackGenericCreate.Invoke(this,
+                        new object[] { this, eventCallbackGenericAction.Invoke(this, new object[] { action })! })!);
+                }
 
                 builder.AddAttribute(4, "Disabled", !column.CanSetFilterValue());
 
@@ -847,6 +1091,8 @@ namespace Radzen.Blazor
         /// <param name="isFirst">if set to <c>true</c> [is first].</param>
         protected virtual async Task OnFilter(ChangeEventArgs args, RadzenDataGridColumn<TItem> column, bool force = false, bool isFirst = true)
         {
+            ArgumentNullException.ThrowIfNull(args);
+            ArgumentNullException.ThrowIfNull(column);
             string property = column.GetFilterProperty();
             if (AllowFiltering && column.Filterable)
             {
@@ -926,7 +1172,7 @@ namespace Radzen.Blazor
 
                 var property = column.GetSortProperty();
 
-                SetColumnSortOrder(column);
+                SetNextColumnSortOrder(column);
                 await Sort.InvokeAsync(new DataGridColumnSortEventArgs<TItem>() { Column = column, SortOrder = column.GetSortOrder() });
                 SaveSettings();
 
@@ -967,10 +1213,11 @@ namespace Radzen.Blazor
         public PopupRenderMode FilterPopupRenderMode { get; set; } = PopupRenderMode.Initial;
 
         /// <summary>
-        /// Сlear filter on the specified column
+        /// ?lear filter on the specified column
         /// </summary>
         public async Task ClearFilter(RadzenDataGridColumn<TItem> column, bool closePopup = false, bool shouldReload = true)
         {
+            ArgumentNullException.ThrowIfNull(column);
             if (closePopup)
             {
                 if (column.headerCell != null)
@@ -979,7 +1226,10 @@ namespace Radzen.Blazor
                 }
                 else
                 {
-                    await JSRuntime.InvokeVoidAsync("Radzen.closePopup", $"{PopupID}{column.GetFilterProperty()}");
+                    if (JSRuntime != null)
+                    {
+                        await JSRuntime.InvokeVoidAsync("Radzen.closePopup", $"{PopupID}{column.GetFilterProperty()}");
+                    }
                 }
             }
 
@@ -1014,7 +1264,7 @@ namespace Radzen.Blazor
                 ResetLoadData();
             }
 
-            if (closePopup)
+            if (closePopup && JSRuntime != null)
             {
                 await JSRuntime.InvokeVoidAsync("Radzen.closeAllPopups", $"{PopupID}{column.GetFilterProperty()}");
             }
@@ -1030,6 +1280,7 @@ namespace Radzen.Blazor
         /// </summary>
         public async Task ApplyFilter(RadzenDataGridColumn<TItem> column, bool closePopup = false)
         {
+            ArgumentNullException.ThrowIfNull(column);
             if (closePopup)
             {
                 if (column.headerCell != null)
@@ -1038,25 +1289,35 @@ namespace Radzen.Blazor
                 }
                 else
                 {
-                    await JSRuntime.InvokeVoidAsync("Radzen.closePopup", $"{PopupID}{column.GetFilterProperty()}");
+                    if (JSRuntime != null)
+                    {
+                        await JSRuntime.InvokeVoidAsync("Radzen.closePopup", $"{PopupID}{column.GetFilterProperty()}");
+                    }
                 }
             }
             await OnFilter(new ChangeEventArgs() { Value = column.GetFilterValue() }, column, true);
 
-            if (closePopup)
+            if (closePopup && JSRuntime != null)
             {
                 await JSRuntime.InvokeVoidAsync("Radzen.closeAllPopups", $"{PopupID}{column.GetFilterProperty()}");
             }
         }
 
+        static readonly IReadOnlyDictionary<string, object> EmptyAttributes =
+            new System.Collections.ObjectModel.ReadOnlyDictionary<string, object>(new Dictionary<string, object>());
+
         internal IReadOnlyDictionary<string, object> CellAttributes(TItem item, RadzenDataGridColumn<TItem> column)
         {
+            // Without a CellRender handler there are no custom attributes; return a shared empty dictionary
+            // instead of allocating event args and a dictionary per cell. Callers only read the result.
+            if (CellRender == null)
+            {
+                return EmptyAttributes;
+            }
+
             var args = new Radzen.DataGridCellRenderEventArgs<TItem>() { Data = item, Column = column };
 
-            if (CellRender != null)
-            {
-                CellRender(args);
-            }
+            CellRender(args);
 
             return new System.Collections.ObjectModel.ReadOnlyDictionary<string, object>(args.Attributes);
         }
@@ -1081,19 +1342,25 @@ namespace Radzen.Blazor
                     break;
             }
 
-            return new System.Collections.ObjectModel.ReadOnlyDictionary<string, object>(args.Attributes);
+            return args.HasAttributes
+                ? new System.Collections.ObjectModel.ReadOnlyDictionary<string, object>(args.Attributes)
+                : EmptyAttributes;
         }
 
         internal IReadOnlyDictionary<string, object> FooterCellAttributes(RadzenDataGridColumn<TItem> column)
         {
-            var args = new Radzen.DataGridCellRenderEventArgs<TItem>() { Column = column };
-
-            if (FooterCellRender != null)
+            if (FooterCellRender == null)
             {
-                FooterCellRender(args);
+                return EmptyAttributes;
             }
 
-            return new System.Collections.ObjectModel.ReadOnlyDictionary<string, object>(args.Attributes);
+            var args = new Radzen.DataGridCellRenderEventArgs<TItem>() { Column = column };
+
+            FooterCellRender(args);
+
+            return args.HasAttributes
+                ? new System.Collections.ObjectModel.ReadOnlyDictionary<string, object>(args.Attributes)
+                : EmptyAttributes;
         }
 
         internal Dictionary<int, int> rowSpans = new Dictionary<int, int>();
@@ -1127,6 +1394,14 @@ namespace Radzen.Blazor
         public bool ShowExpandColumn { get; set; } = true;
 
         /// <summary>
+        /// Gets or sets a value indicating whether all rows can be expanded at once from the header.
+        /// Setting is only available when <see cref="ExpandMode"/> is set to DataGridExpandMode.Multiple.
+        /// </summary>
+        /// <value>The expandAll button in header visibility indicator</value>
+        [Parameter]
+        public bool ShowExpandAll { get; set; }
+
+        /// <summary>
         /// Gets or sets the edit mode.
         /// </summary>
         /// <value>The edit mode.</value>
@@ -1139,173 +1414,221 @@ namespace Radzen.Blazor
         [Parameter]
         public string FilterIcon { get; set; } = "filter_alt";
 
+        private string? filterText;
+
         /// <summary>
         /// Gets or sets the filter text.
         /// </summary>
         /// <value>The filter text.</value>
         [Parameter]
-        public string FilterText { get; set; } = "Filter";
+        public string FilterText { get => filterText ?? Localize(nameof(RadzenStrings.DataGrid_FilterText)); set => filterText = value; }
+
+        private string? enumFilterSelectText;
 
         /// <summary>
         /// Gets or sets the enum filter select text.
         /// </summary>
         /// <value>The enum filter select text.</value>
         [Parameter]
-        public string EnumFilterSelectText { get; set; } = "Select...";
+        public string EnumFilterSelectText { get => enumFilterSelectText ?? Localize(nameof(RadzenStrings.DataGrid_EnumFilterSelectText)); set => enumFilterSelectText = value; }
+
+        private string? enumNullFilterText;
 
         /// <summary>
         /// Gets or sets the nullable enum for null value filter text.
         /// </summary>
         /// <value>The enum filter select text.</value>
         [Parameter]
-        public string EnumNullFilterText { get; set; } = "No value";
+        public string EnumNullFilterText { get => enumNullFilterText ?? Localize(nameof(RadzenStrings.DataGrid_EnumNullFilterText)); set => enumNullFilterText = value; }
+
+        private string? andOperatorText;
 
         /// <summary>
         /// Gets or sets the and operator text.
         /// </summary>
         /// <value>The and operator text.</value>
         [Parameter]
-        public string AndOperatorText { get; set; } = "And";
+        public string AndOperatorText { get => andOperatorText ?? Localize(nameof(RadzenStrings.DataGrid_AndOperatorText)); set => andOperatorText = value; }
+
+        private string? orOperatorText;
 
         /// <summary>
         /// Gets or sets the or operator text.
         /// </summary>
         /// <value>The or operator text.</value>
         [Parameter]
-        public string OrOperatorText { get; set; } = "Or";
+        public string OrOperatorText { get => orOperatorText ?? Localize(nameof(RadzenStrings.DataGrid_OrOperatorText)); set => orOperatorText = value; }
+
+        private string? applyFilterText;
 
         /// <summary>
         /// Gets or sets the apply filter text.
         /// </summary>
         /// <value>The apply filter text.</value>
         [Parameter]
-        public string ApplyFilterText { get; set; } = "Apply";
+        public string ApplyFilterText { get => applyFilterText ?? Localize(nameof(RadzenStrings.DataGrid_ApplyFilterText)); set => applyFilterText = value; }
+
+        private string? clearFilterText;
 
         /// <summary>
         /// Gets or sets the clear filter text.
         /// </summary>
         /// <value>The clear filter text.</value>
         [Parameter]
-        public string ClearFilterText { get; set; } = "Clear";
+        public string ClearFilterText { get => clearFilterText ?? Localize(nameof(RadzenStrings.DataGrid_ClearFilterText)); set => clearFilterText = value; }
+
+        private string? equalsText;
 
         /// <summary>
         /// Gets or sets the equals text.
         /// </summary>
         /// <value>The equals text.</value>
         [Parameter]
-        public string EqualsText { get; set; } = "Equals";
+        public string EqualsText { get => equalsText ?? Localize(nameof(RadzenStrings.DataGrid_EqualsText)); set => equalsText = value; }
+
+        private string? notEqualsText;
 
         /// <summary>
         /// Gets or sets the not equals text.
         /// </summary>
         /// <value>The not equals text.</value>
         [Parameter]
-        public string NotEqualsText { get; set; } = "Not equals";
+        public string NotEqualsText { get => notEqualsText ?? Localize(nameof(RadzenStrings.DataGrid_NotEqualsText)); set => notEqualsText = value; }
+
+        private string? lessThanText;
 
         /// <summary>
         /// Gets or sets the less than text.
         /// </summary>
         /// <value>The less than text.</value>
         [Parameter]
-        public string LessThanText { get; set; } = "Less than";
+        public string LessThanText { get => lessThanText ?? Localize(nameof(RadzenStrings.DataGrid_LessThanText)); set => lessThanText = value; }
+
+        private string? lessThanOrEqualsText;
 
         /// <summary>
         /// Gets or sets the less than or equals text.
         /// </summary>
         /// <value>The less than or equals text.</value>
         [Parameter]
-        public string LessThanOrEqualsText { get; set; } = "Less than or equals";
+        public string LessThanOrEqualsText { get => lessThanOrEqualsText ?? Localize(nameof(RadzenStrings.DataGrid_LessThanOrEqualsText)); set => lessThanOrEqualsText = value; }
+
+        private string? greaterThanText;
 
         /// <summary>
         /// Gets or sets the greater than text.
         /// </summary>
         /// <value>The greater than text.</value>
         [Parameter]
-        public string GreaterThanText { get; set; } = "Greater than";
+        public string GreaterThanText { get => greaterThanText ?? Localize(nameof(RadzenStrings.DataGrid_GreaterThanText)); set => greaterThanText = value; }
+
+        private string? greaterThanOrEqualsText;
 
         /// <summary>
         /// Gets or sets the greater than or equals text.
         /// </summary>
         /// <value>The greater than or equals text.</value>
         [Parameter]
-        public string GreaterThanOrEqualsText { get; set; } = "Greater than or equals";
+        public string GreaterThanOrEqualsText { get => greaterThanOrEqualsText ?? Localize(nameof(RadzenStrings.DataGrid_GreaterThanOrEqualsText)); set => greaterThanOrEqualsText = value; }
+
+        private string? endsWithText;
 
         /// <summary>
         /// Gets or sets the ends with text.
         /// </summary>
         /// <value>The ends with text.</value>
         [Parameter]
-        public string EndsWithText { get; set; } = "Ends with";
+        public string EndsWithText { get => endsWithText ?? Localize(nameof(RadzenStrings.DataGrid_EndsWithText)); set => endsWithText = value; }
+
+        private string? containsText;
 
         /// <summary>
         /// Gets or sets the contains text.
         /// </summary>
         /// <value>The contains text.</value>
         [Parameter]
-        public string ContainsText { get; set; } = "Contains";
+        public string ContainsText { get => containsText ?? Localize(nameof(RadzenStrings.DataGrid_ContainsText)); set => containsText = value; }
+
+        private string? doesNotContainText;
 
         /// <summary>
         /// Gets or sets the does not contain text.
         /// </summary>
         /// <value>The does not contain text.</value>
         [Parameter]
-        public string DoesNotContainText { get; set; } = "Does not contain";
+        public string DoesNotContainText { get => doesNotContainText ?? Localize(nameof(RadzenStrings.DataGrid_DoesNotContainText)); set => doesNotContainText = value; }
+
+        private string? inText;
 
         /// <summary>
         /// Gets or sets the in operator text.
         /// </summary>
         /// <value>The in operator text.</value>
         [Parameter]
-        public string InText { get; set; } = "In";
+        public string InText { get => inText ?? Localize(nameof(RadzenStrings.DataGrid_InText)); set => inText = value; }
+
+        private string? notInText;
 
         /// <summary>
         /// Gets or sets the not in operator text.
         /// </summary>
         /// <value>The not in operator text.</value>
         [Parameter]
-        public string NotInText { get; set; } = "Not in";
+        public string NotInText { get => notInText ?? Localize(nameof(RadzenStrings.DataGrid_NotInText)); set => notInText = value; }
+
+        private string? startsWithText;
 
         /// <summary>
         /// Gets or sets the starts with text.
         /// </summary>
         /// <value>The starts with text.</value>
         [Parameter]
-        public string StartsWithText { get; set; } = "Starts with";
+        public string StartsWithText { get => startsWithText ?? Localize(nameof(RadzenStrings.DataGrid_StartsWithText)); set => startsWithText = value; }
+
+        private string? isNotNullText;
 
         /// <summary>
         /// Gets or sets the not null text.
         /// </summary>
         /// <value>The not null text.</value>
         [Parameter]
-        public string IsNotNullText { get; set; } = "Is not null";
+        public string IsNotNullText { get => isNotNullText ?? Localize(nameof(RadzenStrings.DataGrid_IsNotNullText)); set => isNotNullText = value; }
+
+        private string? isNullText;
 
         /// <summary>
         /// Gets or sets the is null text.
         /// </summary>
         /// <value>The null text.</value>
         [Parameter]
-        public string IsNullText { get; set; } = "Is null";
+        public string IsNullText { get => isNullText ?? Localize(nameof(RadzenStrings.DataGrid_IsNullText)); set => isNullText = value; }
+
+        private string? isEmptyText;
 
         /// <summary>
         /// Gets or sets the is empty text.
         /// </summary>
         /// <value>The empty text.</value>
         [Parameter]
-        public string IsEmptyText { get; set; } = "Is empty";
+        public string IsEmptyText { get => isEmptyText ?? Localize(nameof(RadzenStrings.DataGrid_IsEmptyText)); set => isEmptyText = value; }
+
+        private string? isNotEmptyText;
 
         /// <summary>
         /// Gets or sets the is not empty text.
         /// </summary>
         /// <value>The not empty text.</value>
         [Parameter]
-        public string IsNotEmptyText { get; set; } = "Is not empty";
+        public string IsNotEmptyText { get => isNotEmptyText ?? Localize(nameof(RadzenStrings.DataGrid_IsNotEmptyText)); set => isNotEmptyText = value; }
+
+        private string? customText;
 
         /// <summary>
         /// Gets or sets the custom filter operator text.
         /// </summary>
         /// <value>The custom filter operator text.</value>
         [Parameter]
-        public string CustomText { get; set; } = "Custom";
+        public string CustomText { get => customText ?? Localize(nameof(RadzenStrings.DataGrid_CustomText)); set => customText = value; }
 
         internal class NumericFilterEventCallback
         {
@@ -1314,7 +1637,7 @@ namespace Radzen.Blazor
                 return EventCallback.Factory.Create<T>(receiver, action);
             }
 
-            public static Action<T> Action<T>(Action<object> action)
+            public static Action<T> Action<T>(Action<object?> action)
             {
                 return args => action(args);
             }
@@ -1335,11 +1658,19 @@ namespace Radzen.Blazor
         public int FilterDelay { get; set; } = 500;
 
         /// <summary>
+        /// Gets or sets a value indicating whether filtering is performed as you type. Set to <c>true</c> by default.
+        /// When set to <c>false</c>, the filter is only applied when the user presses Enter or leaves the filter input.
+        /// </summary>
+        /// <value><c>true</c> if filtering as you type is enabled; otherwise, <c>false</c>.</value>
+        [Parameter]
+        public bool FilterAsYouType { get; set; } = true;
+
+        /// <summary>
         /// Gets or sets the filter date format.
         /// </summary>
         /// <value>The filter date format.</value>
         [Parameter]
-        public string FilterDateFormat { get; set; }
+        public string FilterDateFormat { get; set; } = string.Empty;
 
         /// <summary>
         /// Gets or sets a value indicating whether input is allowed in filter DatePicker.
@@ -1353,9 +1684,9 @@ namespace Radzen.Blazor
         /// </summary>
         /// <value>The width of the columns.</value>
         [Parameter]
-        public string ColumnWidth { get; set; }
+        public string ColumnWidth { get; set; } = string.Empty;
 
-        private string _emptyText = "No records to display.";
+        private string? emptyText;
         /// <summary>
         /// Gets or sets the empty text shown when Data is empty collection.
         /// </summary>
@@ -1363,14 +1694,8 @@ namespace Radzen.Blazor
         [Parameter]
         public string EmptyText
         {
-            get { return _emptyText; }
-            set
-            {
-                if (value != _emptyText)
-                {
-                    _emptyText = value;
-                }
-            }
+            get { return emptyText ?? Localize(nameof(RadzenStrings.DataGrid_EmptyText)); }
+            set { emptyText = value; }
         }
 
         /// <summary>
@@ -1378,14 +1703,14 @@ namespace Radzen.Blazor
         /// </summary>
         /// <value>The empty template.</value>
         [Parameter]
-        public RenderFragment EmptyTemplate { get; set; }
+        public RenderFragment? EmptyTemplate { get; set; }
 
         /// <summary>
         /// Gets or sets the edit template.
         /// </summary>
         /// <value>The template.</value>
         [Parameter]
-        public RenderFragment<TItem> EditTemplate { get; set; }
+        public RenderFragment<TItem>? EditTemplate { get; set; }
 
         /// <summary>
         /// Gets or sets a value indicating whether this instance loading indicator is shown.
@@ -1423,6 +1748,14 @@ namespace Radzen.Blazor
         public bool AllowFiltering { get; set; }
 
         /// <summary>
+        /// Gets or sets whether CheckBoxList column filters are applied immediately as options are
+        /// selected, instead of requiring the filter popup's Apply button. Default is false.
+        /// </summary>
+        /// <value>True to apply CheckBoxList filters on each selection change; otherwise false.</value>
+        [Parameter]
+        public bool AutoApplyCheckBoxListFilter { get; set; }
+
+        /// <summary>
         /// Gets or sets a value indicating whether column resizing is allowed.
         /// </summary>
         /// <value><c>true</c> if column resizing is allowed; otherwise, <c>false</c>.</value>
@@ -1444,6 +1777,13 @@ namespace Radzen.Blazor
         public bool AllowColumnPicking { get; set; }
 
         /// <summary>
+        /// Gets or sets a value indicating whether sorting in column picker is allowed.
+        /// </summary>
+        /// <value><c>true</c> if sorting in column picker is allowed; otherwise, <c>false</c>.</value>
+        [Parameter]
+        public bool AllowSortingColumnPicker { get; set; }
+
+        /// <summary>
         /// Gets or sets a value indicating whether cell data should be shown as tooltip.
         /// </summary>
         /// <value><c>true</c> if cell data is shown as tooltip; otherwise, <c>false</c>.</value>
@@ -1457,12 +1797,14 @@ namespace Radzen.Blazor
         [Parameter]
         public bool ShowColumnTitleAsTooltip { get; set; } = true;
 
+        private string? columnsShowingText;
+
         /// <summary>
         /// Gets or sets the column picker columns showing text.
         /// </summary>
         /// <value>The column picker columns showing text.</value>
         [Parameter]
-        public string ColumnsShowingText { get; set; } = "columns showing";
+        public string ColumnsShowingText { get => columnsShowingText ?? Localize(nameof(RadzenStrings.DataGrid_ColumnsShowingText)); set => columnsShowingText = value; }
 
         /// <summary>
         /// Gets or sets the column picker max selected labels.
@@ -1472,67 +1814,92 @@ namespace Radzen.Blazor
         public int ColumnsPickerMaxSelectedLabels { get; set; } = 2;
 
         /// <summary>
+        /// Gets or sets a value indicating whether only visible columns are included in the query.
+        /// </summary>
+        /// <value><c>true</c> if only visible columns are included; otherwise, <c>false</c>.</value>
+        [Parameter]
+        public bool QueryOnlyVisibleColumns { get; set; }
+
+        private string? allColumnsText;
+
+        /// <summary>
         /// Gets or sets the column picker all columns text.
         /// </summary>
         /// <value>The column picker all columns text.</value>
         [Parameter]
-        public string AllColumnsText { get; set; } = "All";
+        public string AllColumnsText { get => allColumnsText ?? Localize(nameof(RadzenStrings.DataGrid_AllColumnsText)); set => allColumnsText = value; }
+
+        private string? columnsText;
 
         /// <summary>
         /// Gets or sets the column picker columns text.
         /// </summary>
         /// <value>The column picker columns text.</value>
         [Parameter]
-        public string ColumnsText { get; set; } = "Columns";
+        public string ColumnsText { get => columnsText ?? Localize(nameof(RadzenStrings.DataGrid_ColumnsText)); set => columnsText = value; }
+
+        private string? removeGroupAriaLabel;
 
         /// <summary>
         /// Gets or sets the remove group button aria label text.
         /// </summary>
         /// <value>The remove group button aria label text.</value>
         [Parameter]
-        public string RemoveGroupAriaLabel { get; set; } = "Remove group";
+        public string RemoveGroupAriaLabel { get => removeGroupAriaLabel ?? Localize(nameof(RadzenStrings.DataGrid_RemoveGroupAriaLabel)); set => removeGroupAriaLabel = value; }
+
+        private string? selectVisibleColumnsAriaLabel;
 
         /// <summary>
         /// Gets or sets the select visible columns aria label text.
         /// </summary>
         /// <value>The select visible columns aria label text.</value>
         [Parameter]
-        public string SelectVisibleColumnsAriaLabel { get; set; } = "select visible columns";
+        public string SelectVisibleColumnsAriaLabel { get => selectVisibleColumnsAriaLabel ?? Localize(nameof(RadzenStrings.DataGrid_SelectVisibleColumnsAriaLabel)); set => selectVisibleColumnsAriaLabel = value; }
+
+        private string? logicalOperatorAriaLabel;
 
         /// <summary>
         /// Gets or sets the column logical filter value aria label text.
         /// </summary>
         /// <value>The the column logical filter value aria label text.</value>
         [Parameter]
-        public string LogicalOperatorAriaLabel { get; set; } = " logical filter operator ";
+        public string LogicalOperatorAriaLabel { get => logicalOperatorAriaLabel ?? Localize(nameof(RadzenStrings.DataGrid_LogicalOperatorAriaLabel)); set => logicalOperatorAriaLabel = value; }
+
+        private string? filterOperatorAriaLabel;
 
         /// <summary>
         /// Gets or sets the column filter value aria label text.
         /// </summary>
         /// <value>The the column filter value aria label text.</value>
         [Parameter]
-        public string FilterOperatorAriaLabel { get; set; } = " filter operator ";
+        public string FilterOperatorAriaLabel { get => filterOperatorAriaLabel ?? Localize(nameof(RadzenStrings.DataGrid_FilterOperatorAriaLabel)); set => filterOperatorAriaLabel = value; }
+
+        private string? secondFilterOperatorAriaLabel;
 
         /// <summary>
         /// Gets or sets the column filter value aria label text.
         /// </summary>
         /// <value>The the column filter value aria label text.</value>
         [Parameter]
-        public string SecondFilterOperatorAriaLabel { get; set; } = " second filter operator ";
+        public string SecondFilterOperatorAriaLabel { get => secondFilterOperatorAriaLabel ?? Localize(nameof(RadzenStrings.DataGrid_SecondFilterOperatorAriaLabel)); set => secondFilterOperatorAriaLabel = value; }
+
+        private string? filterValueAriaLabel;
 
         /// <summary>
         /// Gets or sets the column filter value aria label text.
         /// </summary>
         /// <value>The the column filter value aria label text.</value>
         [Parameter]
-        public string FilterValueAriaLabel { get; set; } = " filter value ";
+        public string FilterValueAriaLabel { get => filterValueAriaLabel ?? Localize(nameof(RadzenStrings.DataGrid_FilterValueAriaLabel)); set => filterValueAriaLabel = value; }
+
+        private string? secondFilterValueAriaLabel;
 
         /// <summary>
         /// Gets or sets the column filter value aria label text.
         /// </summary>
         /// <value>The the column filter value aria label text.</value>
         [Parameter]
-        public string SecondFilterValueAriaLabel { get; set; } = " second filter value ";
+        public string SecondFilterValueAriaLabel { get => secondFilterValueAriaLabel ?? Localize(nameof(RadzenStrings.DataGrid_SecondFilterValueAriaLabel)); set => secondFilterValueAriaLabel = value; }
 
         /// <summary>
         /// Gets or sets a value indicating whether user can pick all columns in column picker.
@@ -1574,21 +1941,23 @@ namespace Radzen.Blazor
         /// </summary>
         /// <value>The group header template.</value>
         [Parameter]
-        public RenderFragment<Group> GroupHeaderTemplate { get; set; }
+        public RenderFragment<Group>? GroupHeaderTemplate { get; set; }
 
         /// <summary>
         /// Gets or sets the group header with option to add custom toggle visibility button template.
         /// </summary>
         /// <value>The group header template with option to add custom toggle visibility.</value>
         [Parameter]
-        public RenderFragment<(Group Group, RadzenDataGridGroupRow<TItem> GroupHeader)> GroupHeaderToggleTemplate { get; set; }
+        public RenderFragment<(Group Group, RadzenDataGridGroupRow<TItem> GroupHeader)>? GroupHeaderToggleTemplate { get; set; }
+
+        private string? groupPanelText;
 
         /// <summary>
         /// Gets or sets the group panel text.
         /// </summary>
         /// <value>The group panel text.</value>
         [Parameter]
-        public string GroupPanelText { get; set; } = "Drag a column header here and drop it to group by that column";
+        public string GroupPanelText { get => groupPanelText ?? Localize(nameof(RadzenStrings.DataGrid_GroupPanelText)); set => groupPanelText = value; }
 
         internal string getColumnUniqueId(int columnIndex)
         {
@@ -1597,22 +1966,51 @@ namespace Radzen.Blazor
 
         internal async Task StartColumnResize(MouseEventArgs args, int columnIndex)
         {
-            await JSRuntime.InvokeVoidAsync("Radzen.startColumnResize", getColumnUniqueId(columnIndex), Reference, columnIndex, args.ClientX);
+            await StartColumnResize(args.ClientX, columnIndex);
+        }
+
+        internal async Task StartColumnResize(double clientX, int columnIndex)
+        {
+            if (JSRuntime != null)
+            {
+                await JSRuntime.InvokeVoidAsync("Radzen.startColumnResize", getColumnUniqueId(columnIndex), Reference, columnIndex, clientX);
+            }
         }
 
         internal async Task StopColumnResize(MouseEventArgs args, int columnIndex)
         {
-            await JSRuntime.InvokeVoidAsync("Radzen.stopColumnResize", getColumnUniqueId(columnIndex), Reference, columnIndex);
+            await StopColumnResize(columnIndex);
+        }
+
+        internal async Task StopColumnResize(int columnIndex)
+        {
+            if (JSRuntime != null)
+            {
+                await JSRuntime.InvokeVoidAsync("Radzen.stopColumnResize", getColumnUniqueId(columnIndex), Reference, columnIndex);
+            }
         }
 
         int? indexOfColumnToReoder;
-        string uniqueIDOfColumnToReoder;
+        string? uniqueIDOfColumnToReoder;
 
         internal async Task StartColumnReorder(MouseEventArgs args, int columnIndex, string uniqueID)
         {
             indexOfColumnToReoder = columnIndex;
             uniqueIDOfColumnToReoder = uniqueID;
-            await JSRuntime.InvokeVoidAsync("Radzen.startColumnReorder", getColumnUniqueId(columnIndex));
+            if (JSRuntime != null)
+            {
+                await JSRuntime.InvokeVoidAsync("Radzen.startColumnReorder", getColumnUniqueId(columnIndex), GetId(), Reference);
+            }
+        }
+
+        internal async Task StartColumnReorder(TouchEventArgs args, int columnIndex, string uniqueID)
+        {
+            indexOfColumnToReoder = columnIndex;
+            uniqueIDOfColumnToReoder = uniqueID;
+            if (JSRuntime != null)
+            {
+                await JSRuntime.InvokeVoidAsync("Radzen.startColumnReorder", getColumnUniqueId(columnIndex), GetId(), Reference);
+            }
         }
 
         internal async Task EndColumnReorder(MouseEventArgs args, int columnIndex)
@@ -1665,6 +2063,30 @@ namespace Radzen.Blazor
             }
         }
 
+        internal async Task EndColumnReorder(TouchEventArgs args, int columnIndex)
+        {
+            await EndColumnReorder((MouseEventArgs)null!, columnIndex);
+        }
+
+        /// <summary>
+        /// Called from JS when a touch-initiated column reorder drop lands on a target column.
+        /// </summary>
+        /// <param name="columnIndex">Index of the destination column.</param>
+        [JSInvokable("RadzenGrid.OnColumnReorderEnded")]
+        public async Task OnColumnReorderEnded(int columnIndex)
+        {
+            await EndColumnReorder((MouseEventArgs)null!, columnIndex);
+        }
+
+        /// <summary>
+        /// Called from JS when a touch-initiated column reorder drop lands on the group panel.
+        /// </summary>
+        [JSInvokable("RadzenGrid.OnColumnDropToGroup")]
+        public async Task OnColumnDropToGroup()
+        {
+            await EndColumnDropToGroup();
+        }
+
         /// <summary>
         /// Called when column is resized.
         /// </summary>
@@ -1673,14 +2095,60 @@ namespace Radzen.Blazor
         [JSInvokable("RadzenGrid.OnColumnResized")]
         public async Task OnColumnResized(int columnIndex, double value)
         {
-            var column = columns.Where(c => c.GetVisible()).ToList()[columnIndex];
-            column.SetWidth($"{Math.Round(value)}px");
+            await OnColumnsResized(columnIndex, value, null);
+        }
+
+        private static string ToPixels(double width) => $"{width.ToString("0.####", CultureInfo.InvariantCulture)}px";
+
+        /// <summary>
+        /// Called when a column is resized and the widths of all visible columns are known.
+        /// </summary>
+        /// <param name="columnIndex">Index of the resized column.</param>
+        /// <param name="value">The resized column width.</param>
+        /// <param name="values">The widths of all visible columns.</param>
+        [JSInvokable("RadzenGrid.OnColumnsResized")]
+        public async Task OnColumnsResized(int columnIndex, double value, double[]? values)
+        {
+            var visibleColumns = columns.Where(c => c.GetVisible()).ToList();
+            var column = visibleColumns.ElementAtOrDefault(columnIndex);
+
+            if (column == null)
+            {
+                return;
+            }
+
+            var widths = new Dictionary<RadzenDataGridColumn<TItem>, double>();
+
+            if (values?.Length == visibleColumns.Count)
+            {
+                for (var index = 0; index < visibleColumns.Count; index++)
+                {
+                    var width = values[index];
+
+                    if (width < 1)
+                    {
+                        visibleColumns[index].SetWidth(null);
+                        continue;
+                    }
+
+                    visibleColumns[index].SetWidth(ToPixels(width));
+                    widths.Add(visibleColumns[index], width);
+                }
+            }
+            else
+            {
+                column.SetWidth(ToPixels(value));
+                widths.Add(column, value);
+            }
+
             await ColumnResized.InvokeAsync(new DataGridColumnResizedEventArgs<TItem>
             {
                 Column = column,
                 Width = value,
+                Widths = widths,
             });
             SaveSettings();
+            StateHasChanged();
         }
 
         internal string GetOrderBy()
@@ -1688,11 +2156,14 @@ namespace Radzen.Blazor
             return string.Join(",", sorts.Select(d => GetSortOrderAsString(d, IsOData())));
         }
 
-        internal string GetSortOrderAsString(SortDescriptor d, bool isOData)
+        internal static string GetSortOrderAsString(SortDescriptor d, bool isOData)
         {
             var property = d.Property;
             if (string.IsNullOrEmpty(property))
+            {
                 return "";
+            }
+
             var p = isOData ? property.Replace('.', '/') : PropertyAccess.GetProperty(property);
             return $"{p} {(d.SortOrder == Radzen.SortOrder.Ascending ? "asc" : "desc")}";
         }
@@ -1718,7 +2189,8 @@ namespace Radzen.Blazor
         [Parameter]
         public EventCallback<DataGridColumnReorderedEventArgs<TItem>> ColumnReordered { get; set; }
 
-        IQueryable<TItem> GetSelfRefView(IQueryable<TItem> view, string orderBy)
+        [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage(TrimMessages.Trimming, TrimMessages.IL2026, Justification = TrimMessages.DataTypePreserved)]
+        internal IQueryable<TItem> GetSelfRefView(IQueryable<TItem> view, string orderBy)
         {
             if (!string.IsNullOrEmpty(orderBy))
             {
@@ -1737,16 +2209,16 @@ namespace Radzen.Blazor
             }
 
             var viewList = view.ToList();
-            var countWithChildren = viewList.Count + childData.SelectMany(d => d.Value.Data).Count();
+            var countWithChildren = viewList.Count + childData.SelectMany(d => d.Value.Data ?? Array.Empty<TItem>()).Count();
 
             for (int i = 0; i < countWithChildren; i++)
             {
                 var item = viewList.ElementAtOrDefault(i);
 
-                if (item != null && childData.ContainsKey(item))
+                if (item != null && TryGetChildData(item, out var childDataValue))
                 {
                     var level = 1;
-                    var parentChildData = childData[item].ParentChildData;
+                    var parentChildData = childDataValue.ParentChildData;
                     while (parentChildData != null)
                     {
                         parentChildData = parentChildData.ParentChildData;
@@ -1755,7 +2227,8 @@ namespace Radzen.Blazor
 
                     childData[item].Level = level;
 
-                    var cd = childData[item].Data.AsQueryable();
+                    var childItems = childData[item].Data ?? Enumerable.Empty<TItem>();
+                    var cd = childItems.AsQueryable();
                     if (!string.IsNullOrEmpty(orderBy))
                     {
                         cd = cd.OrderBy<TItem>(orderBy);
@@ -1765,9 +2238,21 @@ namespace Radzen.Blazor
                 }
             }
 
-            view = viewList.AsQueryable()
-                .Where(i => childData.ContainsKey(i) && childData[i].Data.AsQueryable().Where<TItem>(allColumns).Any()
-                    || viewList.AsQueryable().Where<TItem>(allColumns).Contains(i));
+            var viewListQueryable = viewList.AsQueryable();
+
+            if (LoadData.HasDelegate)
+            {
+                return viewListQueryable;
+            }
+
+            var filteredItems = new HashSet<TItem>(viewListQueryable.Where<TItem>(allColumns));
+
+            var parentsWithMatchingChildren = new HashSet<TItem>(childData
+                .Where(c => (c.Value.Data ?? Enumerable.Empty<TItem>()).AsQueryable().Where<TItem>(allColumns).Any())
+                .Select(c => c.Key));
+
+            view = viewListQueryable
+                .Where(i => parentsWithMatchingChildren.Contains(i) || filteredItems.Contains(i));
 
             return view;
         }
@@ -1776,6 +2261,7 @@ namespace Radzen.Blazor
         /// Gets the view - Data with sorting, filtering and paging applied.
         /// </summary>
         /// <value>The view.</value>
+        [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage(TrimMessages.Trimming, TrimMessages.IL2026, Justification = TrimMessages.DataTypePreserved)]
         public override IQueryable<TItem> View
         {
             get
@@ -1785,7 +2271,7 @@ namespace Radzen.Blazor
 
                 if (LoadData.HasDelegate)
                 {
-                    if (childData.Any())
+                    if (childData.Count > 0)
                     {
                         return GetSelfRefView(base.View, orderBy);
 
@@ -1798,7 +2284,7 @@ namespace Radzen.Blazor
 
                 IQueryable<TItem> view;
 
-                if (childData.Any())
+                if (childData.Count > 0)
                 {
                     view = GetSelfRefView(base.View, orderBy);
                 }
@@ -1808,7 +2294,11 @@ namespace Radzen.Blazor
 
                     if (!string.IsNullOrEmpty(orderBy))
                     {
-                        if (typeof(TItem) == typeof(object))
+                        if (HasSortComparer())
+                        {
+                            view = OrderByComparers(view);
+                        }
+                        else if (typeof(TItem) == typeof(object))
                         {
                             var firstItem = view.FirstOrDefault();
                             if (firstItem != null)
@@ -1848,8 +2338,46 @@ namespace Radzen.Blazor
                     }
                 }
 
-                return view;
+                return QueryOnlyVisibleColumns ? view
+                    .Select(allColumns.Where(c => c.GetVisible() && !string.IsNullOrEmpty(c.Property)).Select(c => c.Property)) : view;
             }
+        }
+
+        RadzenDataGridColumn<TItem>? SortColumn(SortDescriptor descriptor) =>
+            allColumns.FirstOrDefault(c => c.GetSortProperty() == descriptor.Property);
+
+        bool HasSortComparer() => sorts.Any(d => SortColumn(d)?.SortComparer != null);
+
+        static IComparer<object?> ToObjectComparer(IComparer? comparer) =>
+            comparer == null ? Comparer<object?>.Default : Comparer<object?>.Create((a, b) => comparer.Compare(a, b));
+
+        [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage(TrimMessages.Trimming, TrimMessages.IL2026, Justification = TrimMessages.DataTypePreserved)]
+        IQueryable<TItem> OrderByComparers(IQueryable<TItem> source)
+        {
+            IOrderedEnumerable<TItem>? ordered = null;
+
+            foreach (var descriptor in sorts)
+            {
+                var column = SortColumn(descriptor);
+                var comparer = ToObjectComparer(column?.SortComparer);
+                Func<TItem, object?> keySelector = item => column != null ? column.GetSortValue(item) : null;
+                var ascending = descriptor.SortOrder != SortOrder.Descending;
+
+                if (ordered == null)
+                {
+                    ordered = ascending
+                        ? source.OrderBy(keySelector, comparer)
+                        : source.OrderByDescending(keySelector, comparer);
+                }
+                else
+                {
+                    ordered = ascending
+                        ? ordered.ThenBy(keySelector, comparer)
+                        : ordered.ThenByDescending(keySelector, comparer);
+                }
+            }
+
+            return (ordered ?? source.AsEnumerable()).AsQueryable();
         }
 
         internal bool IsVirtualizationAllowed()
@@ -1857,14 +2385,35 @@ namespace Radzen.Blazor
             return AllowVirtualization;
         }
 
-        IList<TItem> _value;
+        // Existence probe used by the empty-state guard. Calling Data.Any() directly
+        // would bind to Enumerable.Any() because Data is typed IEnumerable<TItem>, and
+        // for an EF Core IQueryable that opens a DbDataReader on the full, untranslated
+        // SELECT (no EXISTS / LIMIT) just to check MoveNext() once. Detect IQueryable
+        // so Queryable.Any() is used instead, which the provider can translate to a
+        // cheap EXISTS query.
+        internal bool HasAnyData()
+        {
+            if (Data == null)
+            {
+                return false;
+            }
+
+            if (Data is IQueryable<TItem> queryable)
+            {
+                return queryable.Any();
+            }
+
+            return Data.Any();
+        }
+
+        IList<TItem>? _value;
 
         /// <summary>
         /// Gets or sets the selected item.
         /// </summary>
         /// <value>The selected item.</value>
         [Parameter]
-        public IList<TItem> Value
+        public IList<TItem>? Value
         {
             get
             {
@@ -1965,62 +2514,70 @@ namespace Radzen.Blazor
         /// </summary>
         /// <value>The row render callback.</value>
         [Parameter]
-        public Action<RowRenderEventArgs<TItem>> RowRender { get; set; }
+        public Action<RowRenderEventArgs<TItem>>? RowRender { get; set; }
 
         /// <summary>
         /// Gets or sets the group row render callback. Use it to set group row attributes.
         /// </summary>
         /// <value>The group row render callback.</value>
         [Parameter]
-        public Action<GroupRowRenderEventArgs> GroupRowRender { get; set; }
+        public Action<GroupRowRenderEventArgs>? GroupRowRender { get; set; }
 
         /// <summary>
         /// Gets or sets the cell render callback. Use it to set cell attributes.
         /// </summary>
         /// <value>The cell render callback.</value>
         [Parameter]
-        public Action<DataGridCellRenderEventArgs<TItem>> CellRender { get; set; }
+        public Action<DataGridCellRenderEventArgs<TItem>>? CellRender { get; set; }
 
         /// <summary>
         /// Gets or sets the header cell render callback. Use it to set header cell attributes.
         /// </summary>
         /// <value>The cell render callback.</value>
         [Parameter]
-        public Action<DataGridCellRenderEventArgs<TItem>> HeaderCellRender { get; set; }
+        public Action<DataGridCellRenderEventArgs<TItem>>? HeaderCellRender { get; set; }
 
         /// <summary>
         /// Gets or sets the footer cell render callback. Use it to set footer cell attributes.
         /// </summary>
         /// <value>The cell render callback.</value>
         [Parameter]
-        public Action<DataGridCellRenderEventArgs<TItem>> FooterCellRender { get; set; }
+        public Action<DataGridCellRenderEventArgs<TItem>>? FooterCellRender { get; set; }
 
         /// <summary>
         /// Gets or sets the render callback.
         /// </summary>
         /// <value>The render callback.</value>
         [Parameter]
-        public Action<DataGridRenderEventArgs<TItem>> Render { get; set; }
+        public Action<DataGridRenderEventArgs<TItem>>? Render { get; set; }
 
         /// <summary>
         /// Gets or sets the render async callback.
         /// </summary>
         /// <value>The render async callback.</value>
         [Parameter]
-        public Func<DataGridRenderEventArgs<TItem>, Task> RenderAsync { get; set; }
+        public Func<DataGridRenderEventArgs<TItem>, Task>? RenderAsync { get; set; }
 
         /// <summary>
         /// Gets or sets the load settings callback.
         /// </summary>
         /// <value>The load settings callback.</value>
         [Parameter]
-        public Action<DataGridLoadSettingsEventArgs> LoadSettings { get; set; }
+        public Action<DataGridLoadSettingsEventArgs>? LoadSettings { get; set; }
 
         /// <summary>
         /// Called when data is changed.
         /// </summary>
+        [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage(TrimMessages.Trimming, TrimMessages.IL2026, Justification = TrimMessages.DataTypePreserved)]
         protected override void OnDataChanged()
         {
+            if (exporting)
+            {
+                _view = null;
+                _groupedPagedView = null;
+                return;
+            }
+
             if (!string.IsNullOrEmpty(KeyProperty) && keyPropertyGetter == null)
             {
                 keyPropertyGetter = PropertyAccess.Getter<TItem, object>(KeyProperty);
@@ -2037,7 +2594,7 @@ namespace Radzen.Blazor
         }
 
         /// <inheritdoc />
-        protected override void OnCollectionChanged(object sender, NotifyCollectionChangedEventArgs args)
+        protected override void OnCollectionChanged(object? sender, NotifyCollectionChangedEventArgs args)
         {
             InvokeAsync(Reload);
         }
@@ -2058,6 +2615,10 @@ namespace Radzen.Blazor
                 selectedItems.Clear();
                 expandedItems.Clear();
                 collapsedGroupItems.Clear();
+                childData.Clear();
+                editedItems.Clear();
+                editContexts.Clear();
+                allRowsExpanded = false;
             }
 
             if (resetColumnState)
@@ -2069,10 +2630,12 @@ namespace Radzen.Blazor
                     c.SetOrderIndex(null);
                     c.SetWidth(null);
                     c.SetVisible(null);
+                    c.SetCustomFilterExpression(null);
                 });
                 selectedColumns = allColumns.Where(c => c.Pickable && c.GetVisible()).ToList();
                 sorts.Clear();
                 columns = allColumns.Where(c => c.Parent == null).ToList();
+                ApplyGroupedColumnVisibility();
            }
         }
 
@@ -2092,7 +2655,7 @@ namespace Radzen.Blazor
 
             if (Data != null && !LoadData.HasDelegate)
             {
-                Count = 1;
+                Count = IsVirtualizationAllowed() && !HasAnyData() ? 0 : 1;
             }
 
             if (AllowVirtualization)
@@ -2157,29 +2720,42 @@ namespace Radzen.Blazor
 
         IEnumerable<FilterDescriptor> filters = Enumerable.Empty<FilterDescriptor>();
 
-        internal async Task InvokeLoadData(int start, int top)
+        [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage(TrimMessages.Trimming, TrimMessages.IL2026, Justification = TrimMessages.DataTypePreserved)]
+        internal async Task InvokeLoadData(int start, int top, bool fromExport = false)
         {
+            if (exporting && !fromExport)
+            {
+                return;
+            }
+
+            if (!exporting)
+            {
+                lastLoadDataStart = start;
+                lastLoadDataTop = top;
+            }
+
             var orderBy = GetOrderBy();
 
             Query.Skip = skip;
             Query.Top = PageSize;
             Query.OrderBy = orderBy;
 
-            var filterString = allColumns.ToList().ToFilterString<TItem>();
-            Query.Filter = filterString;
+            Query.GetFilter = () => allColumns.ToList().ToFilterString<TItem>();
 
             filters = allColumns.ToList()
-                .Where(c => c.Filterable && c.GetVisible() && (c.GetFilterValue() != null
+                .Where(c => c.Filterable && (c.GetFilterValue() != null
                     || c.GetFilterOperator() == FilterOperator.IsNotNull || c.GetFilterOperator() == FilterOperator.IsNull
                     || c.GetFilterOperator() == FilterOperator.IsEmpty | c.GetFilterOperator() == FilterOperator.IsNotEmpty))
                 .Select(c => new FilterDescriptor()
                 {
-                    Property = c.GetFilterProperty(),
+                    Property = !string.IsNullOrEmpty(c.FilterProperty) && c.FilterProperty != c.Property ? c.Property : c.GetFilterProperty(),
+                    FilterProperty = !string.IsNullOrEmpty(c.FilterProperty) && c.FilterProperty != c.Property ? c.FilterProperty : null,
                     FilterValue = c.GetFilterValue(),
                     FilterOperator = c.GetFilterOperator(),
                     SecondFilterValue = c.GetSecondFilterValue(),
                     SecondFilterOperator = c.GetSecondFilterOperator(),
-                    LogicalFilterOperator = c.GetLogicalFilterOperator()
+                    LogicalFilterOperator = c.GetLogicalFilterOperator(),
+                    Type = c.Type
                 })
                 .ToList();
 
@@ -2192,7 +2768,7 @@ namespace Radzen.Blazor
                     Skip = start,
                     Top = top,
                     OrderBy = orderBy,
-                    Filter = IsOData() ? allColumns.ToList().ToODataFilterString<TItem>() : filterString,
+                    GetFilter = () => IsOData() ? allColumns.ToList().ToODataFilterString<TItem>() : allColumns.ToList().ToFilterString<TItem>(),
                     Filters = filters,
                     Sorts = sorts
                 });
@@ -2226,12 +2802,12 @@ namespace Radzen.Blazor
 
         internal string ExpandedGroupItemStyle(RadzenDataGridGroupRow<TItem> item, bool? expandedOnLoad)
         {
-            return collapsedGroupItems.Keys.Contains(item) || expandedOnLoad == false ? "notranslate rz-row-toggler rzi-grid-sort rzi-chevron-circle-right" : "rz-row-toggler rzi-grid-sort rzi-chevron-circle-down";
+            return collapsedGroupItems.ContainsKey(item) || expandedOnLoad == false ? "notranslate rz-row-toggler rzi-grid-sort rzi-chevron-circle-right" : "rz-row-toggler rzi-grid-sort rzi-chevron-circle-down";
         }
 
         internal bool IsGroupItemExpanded(RadzenDataGridGroupRow<TItem> item)
         {
-            return !collapsedGroupItems.Keys.Contains(item);
+            return !collapsedGroupItems.ContainsKey(item);
         }
 
         /// <summary>
@@ -2253,18 +2829,82 @@ namespace Radzen.Blazor
         /// </summary>
         /// <value>The key property.</value>
         [Parameter]
-        public string KeyProperty { get; set; }
+        public string? KeyProperty { get; set; }
 
-        internal Func<TItem, object> keyPropertyGetter;
+        internal Func<TItem, object>? keyPropertyGetter;
         /// <summary>
-        /// Compares two items
+        /// Compares two items for equality. When <see cref="KeyProperty"/> is set the comparison uses the key value
+        /// (null-safe — both-null keys are equal, one-null is not), otherwise falls back to <see cref="object.Equals(object)"/>.
         /// </summary>
         /// <param name="item">The first item</param>
         /// <param name="otherItem">The second item</param>
         /// <returns>Are items equal</returns>
         protected bool ItemEquals(TItem item, TItem otherItem)
         {
-            return keyPropertyGetter != null ? keyPropertyGetter(item).Equals(keyPropertyGetter(otherItem)) : item.Equals(otherItem);
+            if (item == null && otherItem == null)
+            {
+                return true;
+            }
+
+            if (item == null || otherItem == null)
+            {
+                return false;
+            }
+
+            return keyPropertyGetter != null ? Equals(keyPropertyGetter(item), keyPropertyGetter(otherItem)) : item.Equals(otherItem);
+        }
+
+        // Membership test equivalent to items.Keys.Any(i => ItemEquals(i, item)), but O(1) when no
+        // KeyProperty is set, avoiding an O(selected) scan per row on every render.
+        bool ContainsItemKey(Dictionary<TItem, bool> items, TItem item)
+        {
+            if (items.Count == 0)
+            {
+                return false;
+            }
+
+            if (keyPropertyGetter == null)
+            {
+                if (item == null)
+                {
+                    return false;
+                }
+
+                if (items.ContainsKey(item))
+                {
+                    return true;
+                }
+
+                if (!ItemTypeOverridesGetHashCode(item))
+                {
+                    return false;
+                }
+            }
+
+            foreach (var i in items.Keys)
+            {
+                if (ItemEquals(i, item))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        Type? hashCodeCheckType;
+        bool hashCodeCheckResult;
+
+        bool ItemTypeOverridesGetHashCode(TItem item)
+        {
+            var type = item!.GetType();
+            if (type != hashCodeCheckType)
+            {
+                hashCodeCheckType = type;
+                hashCodeCheckResult = type.GetMethod(nameof(GetHashCode), Type.EmptyTypes)?.DeclaringType != typeof(object);
+            }
+
+            return hashCodeCheckResult;
         }
 
         internal bool? allGroupsExpanded;
@@ -2274,16 +2914,18 @@ namespace Radzen.Blazor
         /// </summary>
         public async System.Threading.Tasks.Task ExpandGroupItem(RadzenDataGridGroupRow<TItem> item, bool? expandedOnLoad)
         {
+            ArgumentNullException.ThrowIfNull(item);
             if (expandedOnLoad == true)
+            {
                 return;
+            }
 
             allGroupsExpanded = null;
             await AllGroupsExpandedChanged.InvokeAsync(allGroupsExpanded);
 
-            if (!collapsedGroupItems.Keys.Contains(item))
+            if (collapsedGroupItems.TryAdd(item, true))
             {
                 await GroupRowCollapse.InvokeAsync(item.Group);
-                collapsedGroupItems.Add(item, true);
             }
             else
             {
@@ -2298,16 +2940,89 @@ namespace Radzen.Blazor
 
         internal string ExpandedItemStyle(TItem item)
         {
-            return expandedItems.Keys.Any(i => ItemEquals(i, item)) ? "notranslate rz-row-toggler rzi-chevron-circle-down" : "rz-row-toggler rzi-chevron-circle-right";
+            return ContainsItemKey(expandedItems, item) ? "notranslate rz-row-toggler rzi-chevron-circle-down" : "rz-row-toggler rzi-chevron-circle-right";
         }
 
         internal Dictionary<TItem, bool> selectedItems = new Dictionary<TItem, bool>();
 
+        // RowStyle only ever produces one of these four constants; returning them avoids allocating an
+        // identical string per row on every render.
+        const string RowClass = "rz-data-row  ";
+        const string RowClassEditing = "rz-data-row rz-datatable-edit ";
+        const string RowClassSelected = "rz-state-highlight rz-data-row  ";
+        const string RowClassSelectedEditing = "rz-state-highlight rz-data-row rz-datatable-edit ";
+
         internal string RowStyle(TItem item, int index)
         {
-            var isInEditMode = IsRowInEditMode(item) ? "rz-datatable-edit" : "";
+            var editing = IsRowInEditMode(item);
+            var selected = (RowSelect.HasDelegate || ValueChanged.HasDelegate || SelectionMode == DataGridSelectionMode.Multiple)
+                && ContainsItemKey(selectedItems, item);
 
-            return (RowSelect.HasDelegate || ValueChanged.HasDelegate || SelectionMode == DataGridSelectionMode.Multiple) && selectedItems.Keys.Any(i => ItemEquals(i, item)) ? $"rz-state-highlight rz-data-row {isInEditMode} " : $"rz-data-row {isInEditMode} ";
+            return selected
+                ? (editing ? RowClassSelectedEditing : RowClassSelected)
+                : (editing ? RowClassEditing : RowClass);
+        }
+
+        internal string? RowAriaSelected(TItem item, int index)
+        {
+            if (!(RowSelect.HasDelegate || ValueChanged.HasDelegate || SelectionMode == DataGridSelectionMode.Multiple))
+            {
+                return null;
+            }
+
+            return ContainsItemKey(selectedItems, item) ? "true" : "false";
+        }
+
+        int HeaderRowCount()
+        {
+            return (ShowHeader ? deepestChildColumnLevel + 1 : 0) + (FilterRowActive ? 1 : 0);
+        }
+
+        internal string? GridAriaRowCount()
+        {
+            return IsVirtualizationAllowed() && Groups.Count == 0 ? (Count + HeaderRowCount()).ToString(CultureInfo.InvariantCulture) : null;
+        }
+
+        internal string? RowAriaRowIndex(int index)
+        {
+            return IsVirtualizationAllowed() && Groups.Count == 0 ? (virtualItemsStartIndex + index + HeaderRowCount() + 1).ToString(CultureInfo.InvariantCulture) : null;
+        }
+
+        internal string? RowAriaLevel(TItem item)
+        {
+            if (!LoadChildData.HasDelegate)
+            {
+                return null;
+            }
+
+            var child = childData.Count > 0 ? childData.Where(c => c.Value?.Data?.Contains(item) == true).FirstOrDefault() :
+                default(KeyValuePair<TItem, DataGridChildData<TItem>>);
+
+            var level = !object.Equals(child, default(KeyValuePair<TItem, DataGridChildData<TItem>>)) ? child.Value.Level : 0;
+
+            return (level + 1).ToString(CultureInfo.InvariantCulture);
+        }
+
+        private static bool IsChainableClickHandler(object value) => value is
+            EventCallback<MouseEventArgs> or EventCallback or Func<MouseEventArgs, Task> or Func<Task> or Action<MouseEventArgs> or Action;
+
+        // Runs the built-in row click (and selection) first, then a consumer-supplied onclick from RowRender,
+        // so a consumer onclick that reads selection state observes it after the click.
+        private EventCallback<MouseEventArgs> CombineRowClick(object existing, TItem item)
+        {
+            return EventCallback.Factory.Create<MouseEventArgs>(this, async e =>
+            {
+                await OnRowClickHandler(item, e);
+                switch (existing)
+                {
+                    case EventCallback<MouseEventArgs> ec: await ec.InvokeAsync(e); break;
+                    case EventCallback ec: await ec.InvokeAsync(e); break;
+                    case Func<MouseEventArgs, Task> f: await f(e); break;
+                    case Func<Task> f: await f(); break;
+                    case Action<MouseEventArgs> a: a(e); break;
+                    case Action a: a(); break;
+                }
+            });
         }
 
         internal Tuple<Radzen.RowRenderEventArgs<TItem>, IReadOnlyDictionary<string, object>> RowAttributes(TItem item, int index)
@@ -2319,29 +3034,54 @@ namespace Radzen.Blazor
                 RowRender(args);
             }
 
-            return new Tuple<Radzen.RowRenderEventArgs<TItem>, IReadOnlyDictionary<string, object>>(args, new System.Collections.ObjectModel.ReadOnlyDictionary<string, object>(args.Attributes));
+            IReadOnlyDictionary<string, object> attributes;
+            if (RowClickActive)
+            {
+                var dict = args.HasAttributes ? new Dictionary<string, object>(args.Attributes) : new Dictionary<string, object>();
+                // A chainable consumer onclick runs after the built-in row click; anything else (e.g. a string
+                // HTML handler) is kept as-is rather than wrapped and dropped.
+                dict["onclick"] = dict.TryGetValue("onclick", out var existing) && existing != null
+                    ? IsChainableClickHandler(existing) ? CombineRowClick(existing, item) : existing
+                    : EventCallback.Factory.Create<MouseEventArgs>(this, e => OnRowClickHandler(item, e));
+                attributes = dict;
+            }
+            else
+            {
+                attributes = args.HasAttributes
+                    ? new System.Collections.ObjectModel.ReadOnlyDictionary<string, object>(args.Attributes)
+                    : EmptyAttributes;
+            }
+
+            return new Tuple<Radzen.RowRenderEventArgs<TItem>, IReadOnlyDictionary<string, object>>(args, attributes);
         }
 
         internal Tuple<GroupRowRenderEventArgs, IReadOnlyDictionary<string, object>> GroupRowAttributes(RadzenDataGridGroupRow<TItem> item)
         {
-            var args = new Radzen.GroupRowRenderEventArgs() { Group = item.Group, FirstRender = firstRender };
+            var args = new Radzen.GroupRowRenderEventArgs() { Group = item.Group, FirstRender = firstRender, Expandable = item.GroupResult.Count > 0 };
 
             if (GroupRowRender != null)
             {
                 GroupRowRender(args);
             }
 
-            return new Tuple<GroupRowRenderEventArgs, IReadOnlyDictionary<string, object>>(args, new System.Collections.ObjectModel.ReadOnlyDictionary<string, object>(args.Attributes));
+            var attributes = args.HasAttributes
+                ? new System.Collections.ObjectModel.ReadOnlyDictionary<string, object>(args.Attributes)
+                : EmptyAttributes;
+
+            return new Tuple<GroupRowRenderEventArgs, IReadOnlyDictionary<string, object>>(args, attributes);
         }
 
-        bool settingsChanged = false;
-        bool visibleChanged = false;
+        bool settingsChanged;
+        bool visibleChanged;
+        IJSObjectReference? _jsRef;
+        int _jsRefVersion;
         internal bool firstRender = true;
 
         /// <inheritdoc />
         public override async Task SetParametersAsync(ParameterView parameters)
         {
-            bool emptyTextChanged = false, allowColumnPickingChanged = false, valueChanged = false, allGroupsExpandedChanged = false;
+            bool emptyTextChanged = false, allowColumnPickingChanged = false, valueChanged = false, allGroupsExpandedChanged = false,
+                groupsChanged = false, hideGroupedColumnChanged = false;
 
             foreach (var parameter in parameters) {
                 switch (parameter.Name) {
@@ -2357,6 +3097,12 @@ namespace Radzen.Blazor
                     case nameof(Settings):
                         settingsChanged = HasChanged(parameter.Value, Settings); break;
 
+                    case nameof(Groups):
+                        groupsChanged = !ReferenceEquals(parameter.Value, groups); break;
+
+                    case nameof(HideGroupedColumn):
+                        hideGroupedColumnChanged = HasChanged(parameter.Value, HideGroupedColumn); break;
+
                     case nameof(AllGroupsExpanded):
                         allGroupsExpandedChanged = HasChanged(parameter.Value, AllGroupsExpanded);
                         if (allGroupsExpandedChanged)
@@ -2371,6 +3117,16 @@ namespace Radzen.Blazor
             }
 
             await base.SetParametersAsync(parameters);
+
+            if (groupsChanged || hideGroupedColumnChanged)
+            {
+                SynchronizeGroupedColumnVisibility();
+
+                if (groupsChanged && !firstRender)
+                {
+                    await InvokeAsync(Reload);
+                }
+            }
 
             if (valueChanged)
             {
@@ -2400,9 +3156,9 @@ namespace Radzen.Blazor
 
             if (visibleChanged && !firstRender)
             {
-                if (Visible == false)
+                if (Visible && LoadData.HasDelegate)
                 {
-                    Dispose();
+                    await InvokeAsync(Reload);
                 }
             }
 
@@ -2414,7 +3170,7 @@ namespace Radzen.Blazor
             if (firstRender && Visible && (LoadData.HasDelegate && Data == null) && IsVirtualizationAllowed())
             {
                 await Task.Yield();
-                Data = Enumerable.Empty<TItem>().Append(default(TItem));
+                Data = Enumerable.Empty<TItem>().Append(default(TItem)!);
             }
             else if(settings == null)
             {
@@ -2424,12 +3180,14 @@ namespace Radzen.Blazor
 
         /// <summary>
         /// Force load of the DataGrid Settings.
+        /// This method triggers a reload of the DataGrid settings, optionally forcing a reload even if the settings are already loaded.
         /// </summary>
-        public async Task ReloadSettings()
+        /// <param name="forceReload">If true, forces a reload of the settings regardless of their current state. Default is false.</param>
+        public async Task ReloadSettings(bool forceReload = false)
         {
             if (settings != null)
             {
-                await LoadSettingsInternal(settings);
+                await LoadSettingsInternal(settings, forceReload);
             }
         }
 
@@ -2440,10 +3198,7 @@ namespace Radzen.Blazor
             {
                 var args = new Radzen.DataGridLoadSettingsEventArgs() { Settings = settings };
 
-                if (LoadSettings != null)
-                {
-                    LoadSettings(args);
-                }
+                LoadSettings(args);
 
                 if (args.Settings != settings)
                 {
@@ -2458,6 +3213,7 @@ namespace Radzen.Blazor
             {
                 if (settings != null && settingsChanged)
                 {
+                    settingsChanged = false;
                     await LoadSettingsInternal(settings);
                 }
 
@@ -2477,6 +3233,37 @@ namespace Radzen.Blazor
             if (firstRender || visibleChanged)
             {
                 visibleChanged = false;
+
+                if (Visible && JSRuntime != null)
+                {
+                    var version = ++_jsRefVersion;
+                    var jsRef = _jsRef;
+                    _jsRef = null;
+
+                    if (jsRef != null)
+                    {
+                        await jsRef.InvokeVoidAsync("dispose");
+                        await jsRef.DisposeAsync();
+                    }
+
+                    if (version != _jsRefVersion)
+                    {
+                        return;
+                    }
+
+                    var created = await JSRuntime.InvokeAsync<IJSObjectReference>(
+                        "Radzen.createDataGrid", Element);
+
+                    if (version == _jsRefVersion)
+                    {
+                        _jsRef = created;
+                    }
+                    else if (created != null)
+                    {
+                        await created.InvokeVoidAsync("dispose");
+                        await created.DisposeAsync();
+                    }
+                }
             }
         }
 
@@ -2486,6 +3273,7 @@ namespace Radzen.Blazor
         /// <param name="item">The item.</param>
         public async System.Threading.Tasks.Task ExpandRow(TItem item)
         {
+            ArgumentNullException.ThrowIfNull(item);
             await ExpandItem(item);
         }
 
@@ -2495,7 +3283,7 @@ namespace Radzen.Blazor
         /// <param name="item">The item.</param>
         public bool IsRowExpanded(TItem item)
         {
-            return expandedItems.Keys.Any(i => ItemEquals(i, item));
+            return ContainsItemKey(expandedItems, item);
         }
 
         /// <summary>
@@ -2504,12 +3292,16 @@ namespace Radzen.Blazor
         /// <param name="items">The range of rows.</param>
         public async System.Threading.Tasks.Task ExpandRows(IEnumerable<TItem> items)
         {
+            ArgumentNullException.ThrowIfNull(items);
             // Only allow the functionality when multiple row expand is allowed
-            if (this.ExpandMode != DataGridExpandMode.Multiple) return;
+            if (this.ExpandMode != DataGridExpandMode.Multiple)
+            {
+                return;
+            }
 
             foreach (TItem item in items)
             {
-                if (!expandedItems.Keys.Any(i => ItemEquals(i, item)))
+                if (!ContainsItemKey(expandedItems, item))
                 {
                     expandedItems.Add(item, true);
                     await RowExpand.InvokeAsync(item);
@@ -2519,7 +3311,7 @@ namespace Radzen.Blazor
 
                     if (args.Data != null && !childData.ContainsKey(item))
                     {
-                        childData.Add(item, new DataGridChildData<TItem>() { Data = args.Data, ParentChildData = childData.Where(c => c.Value.Data.Contains(item)).Select(c => c.Value).FirstOrDefault() });
+                        childData.Add(item, new DataGridChildData<TItem>() { Data = args.Data, ParentChildData = childData.Where(c => c.Value.Data?.Contains(item) == true).Select(c => c.Value).FirstOrDefault() });
                         _view = null;
                     }
                 }
@@ -2547,7 +3339,10 @@ namespace Radzen.Blazor
         public async System.Threading.Tasks.Task CollapseRows(IEnumerable<TItem> items)
         {
             // Only allow the functionality when multiple row expand is allowed
-            if (this.ExpandMode != DataGridExpandMode.Multiple) return;
+            if (this.ExpandMode != DataGridExpandMode.Multiple)
+            {
+                return;
+            }
 
             foreach (TItem item in items.Where(x=> expandedItems.Keys.Any(i => ItemEquals(i, x))))
             {
@@ -2558,19 +3353,61 @@ namespace Radzen.Blazor
 
         private async Task CollapseItem(TItem item)
         {
-            expandedItems.Remove(item);
+            expandedItems.Remove(FindItemKey(expandedItems.Keys, item));
             await RowCollapse.InvokeAsync(item);
 
-            if (childData.ContainsKey(item))
+            if (childData.Remove(FindItemKey(childData.Keys, item)))
             {
-                childData.Remove(item);
                 _view = null;
             }
         }
 
+        bool TryGetChildData(TItem item, [NotNullWhen(true)] out DataGridChildData<TItem>? value)
+        {
+            if (childData.TryGetValue(item, out value))
+            {
+                return true;
+            }
+
+            if (keyPropertyGetter == null)
+            {
+                return false;
+            }
+
+            var key = FindItemKey(childData.Keys, item);
+
+            if (!childData.TryGetValue(key, out value))
+            {
+                return false;
+            }
+
+            childData.Remove(key);
+            childData[item] = value;
+
+            return true;
+        }
+
+        TItem FindItemKey(IEnumerable<TItem> keys, TItem item)
+        {
+            if (keyPropertyGetter == null)
+            {
+                return item;
+            }
+
+            foreach (var key in keys)
+            {
+                if (ItemEquals(key, item))
+                {
+                    return key;
+                }
+            }
+
+            return item;
+        }
+
         internal async System.Threading.Tasks.Task ExpandItem(TItem item)
         {
-            if (ExpandMode == DataGridExpandMode.Single && expandedItems.Keys.Any() && !LoadChildData.HasDelegate)
+            if (ExpandMode == DataGridExpandMode.Single && expandedItems.Keys.Count > 0 && !LoadChildData.HasDelegate)
             {
                 var itemToCollapse = expandedItems.Keys.FirstOrDefault();
                 if (itemToCollapse != null)
@@ -2578,7 +3415,7 @@ namespace Radzen.Blazor
                     expandedItems.Remove(itemToCollapse);
                     await RowCollapse.InvokeAsync(itemToCollapse);
 
-                    if (object.Equals(item, itemToCollapse))
+                    if (ItemEquals(item, itemToCollapse))
                     {
                         return;
                     }
@@ -2586,7 +3423,7 @@ namespace Radzen.Blazor
                 }
             }
 
-            if (!expandedItems.Keys.Any(i => ItemEquals(i, item)))
+            if (!ContainsItemKey(expandedItems, item))
             {
                 expandedItems.Add(item, true);
                 await RowExpand.InvokeAsync(item);
@@ -2596,7 +3433,7 @@ namespace Radzen.Blazor
 
                 if (args.Data != null && !childData.ContainsKey(item))
                 {
-                    childData.Add(item, new DataGridChildData<TItem>() { Data = args.Data, ParentChildData = childData.Where(c => c.Value.Data.Contains(item)).Select(c => c.Value).FirstOrDefault() });
+                    childData.Add(item, new DataGridChildData<TItem>() { Data = args.Data, ParentChildData = childData.Where(c => c.Value!.Data!.Contains(item)).Select(c => c.Value).FirstOrDefault() });
                     _view = null;
                 }
             }
@@ -2631,6 +3468,36 @@ namespace Radzen.Blazor
         [Parameter]
         public bool ShowGroupExpandColumn { get; set; } = true;
 
+        private string? expandAllTitle;
+
+        /// <summary>
+        /// Gets or sets the title attribute of the expand all button.
+        /// </summary>
+        /// <value>The title attribute value of the expand all button.</value>
+        [Parameter]
+        public string ExpandAllTitle { get => expandAllTitle ?? Localize(nameof(RadzenStrings.DataGrid_ExpandAllTitle)); set => expandAllTitle = value; }
+
+        private string? collapseAllTitle;
+
+        /// <summary>
+        /// Gets or sets the title attribute of the collapse all button.
+        /// </summary>
+        /// <value>The title attribute value of the collapse all button.</value>
+        [Parameter]
+        public string CollapseAllTitle { get => collapseAllTitle ?? Localize(nameof(RadzenStrings.DataGrid_CollapseAllTitle)); set => collapseAllTitle = value; }
+
+        private bool allRowsExpanded;
+        private async Task ToggleAllRowsExpand()
+        {
+            await (allRowsExpanded ? CollapseRows(PagedView) : ExpandRows(PagedView));
+            allRowsExpanded = !allRowsExpanded;
+        }
+
+        private string TitleAttribute()
+        {
+            return allRowsExpanded ? CollapseAllTitle : ExpandAllTitle;
+        }
+
         /// <summary>
         /// Gets or sets the grid lines.
         /// </summary>
@@ -2638,7 +3505,7 @@ namespace Radzen.Blazor
         [Parameter]
         public DataGridGridLines GridLines { get; set; } = DataGridGridLines.Default;
 
-        internal bool ShowGridLines(RadzenDataGridColumn<TItem> column)
+        internal static bool ShowGridLines(RadzenDataGridColumn<TItem> column)
         {
             return column.Columns != null || column.Parent != null;
         }
@@ -2661,7 +3528,8 @@ namespace Radzen.Blazor
                 return "";
             }
 
-            return $"rz-grid-gridlines-{Enum.GetName(typeof(DataGridGridLines), GridLines).ToLower()}";
+            var enumName = Enum.GetName<DataGridGridLines>(GridLines);
+            return $"rz-grid-gridlines-{(enumName ?? GridLines.ToString()).ToLower(CultureInfo.InvariantCulture)}";
         }
 
         /// <summary>
@@ -2670,6 +3538,23 @@ namespace Radzen.Blazor
         /// <value>The selection mode.</value>
         [Parameter]
         public DataGridSelectionMode SelectionMode { get; set; } = DataGridSelectionMode.Single;
+
+        /// <summary>
+        /// Raises <see cref="ContextMenu" />.
+        /// </summary>
+        /// <param name="args">The <see cref="Microsoft.AspNetCore.Components.Web.MouseEventArgs"/> instance containing the event data.</param>
+        public override async Task OnContextMenu(Microsoft.AspNetCore.Components.Web.MouseEventArgs args)
+        {
+            await ContextMenu.InvokeAsync(args);
+        }
+
+        /// <summary>
+        /// Adds context menu for this component.
+        /// </summary>
+        protected override async System.Threading.Tasks.Task AddContextMenu()
+        {
+            await Task.CompletedTask;
+        }
 
         internal async Task OnCellContextMenu(DataGridCellMouseEventArgs<TItem> args)
         {
@@ -2689,7 +3574,7 @@ namespace Radzen.Blazor
         internal async Task OnRowClick(DataGridRowMouseEventArgs<TItem> args)
         {
             await RowClick.InvokeAsync(args);
-            if (AllowRowSelectOnRowClick)
+            if (AllowRowSelectOnRowClick && args.Data != null)
             {
                 await OnRowSelect(args.Data);
             }
@@ -2697,7 +3582,7 @@ namespace Radzen.Blazor
 
         internal async System.Threading.Tasks.Task OnRowSelect(TItem item, bool raiseChange = true)
         {
-            var focusedIndexResult = PagedView
+            var focusedIndexResult = PagedView.ToList()
                 .Select((x, i) => new { Item = x, Index = i })
                 .Where(itemWithIndex => ItemEquals(itemWithIndex.Item, item))
                 .FirstOrDefault();
@@ -2707,7 +3592,7 @@ namespace Radzen.Blazor
                 focusedIndex = focusedIndexResult.Index + 1;
             }
 
-            if (SelectionMode == DataGridSelectionMode.Single && item != null && selectedItems.Keys.Any(i => ItemEquals(i, item)))
+            if (SelectionMode == DataGridSelectionMode.Single && item != null && ContainsItemKey(selectedItems, item))
             {
                 // Legacy RowSelect raise
                 if (raiseChange)
@@ -2717,7 +3602,7 @@ namespace Radzen.Blazor
                 return;
             }
 
-            if (SelectionMode == DataGridSelectionMode.Single && selectedItems.Keys.Any())
+            if (SelectionMode == DataGridSelectionMode.Single && selectedItems.Keys.Count > 0)
             {
                 var itemToDeselect = selectedItems.Keys.FirstOrDefault();
                 if (itemToDeselect != null)
@@ -2729,7 +3614,7 @@ namespace Radzen.Blazor
 
             if (item != null)
             {
-                if (!selectedItems.Keys.Any(i => ItemEquals(i, item)))
+                if (!ContainsItemKey(selectedItems, item))
                 {
                     selectedItems.Add(item, true);
                     if (raiseChange)
@@ -2809,7 +3694,7 @@ namespace Radzen.Blazor
         /// <param name="item">The item.</param>
         public async System.Threading.Tasks.Task EditRow(TItem item)
         {
-            if(itemsToInsert.Count() > 0 && EditMode == DataGridEditMode.Single)
+            if(itemsToInsert.Count > 0 && EditMode == DataGridEditMode.Single)
             {
                 var itemsToCancel = itemsToInsert.ToList();
                 foreach( var itemToCancel in itemsToCancel)
@@ -2823,7 +3708,7 @@ namespace Radzen.Blazor
 
         async System.Threading.Tasks.Task EditRowInternal(TItem item)
         {
-            if (EditMode == DataGridEditMode.Single && editedItems.Keys.Any())
+            if (EditMode == DataGridEditMode.Single && editedItems.Keys.Count > 0)
             {
                 var itemToCancel = editedItems.Keys.FirstOrDefault();
                 if (itemToCancel != null)
@@ -2833,7 +3718,7 @@ namespace Radzen.Blazor
                 }
             }
 
-            if (!editedItems.Keys.Any(i => ItemEquals(i, item)))
+            if (!ContainsItemKey(editedItems, item))
             {
                 editedItems.Add(item, true);
 
@@ -2852,12 +3737,16 @@ namespace Radzen.Blazor
         /// <param name="items">The range of rows.</param>
         public async System.Threading.Tasks.Task EditRows(IEnumerable<TItem> items)
         {
+            ArgumentNullException.ThrowIfNull(items);
             // Only allow the functionality when multiple row edits is allowed
-            if (this.EditMode != DataGridEditMode.Multiple) return;
+            if (this.EditMode != DataGridEditMode.Multiple)
+            {
+                return;
+            }
 
             foreach (TItem item in items)
             {
-                if (!editedItems.Keys.Any(i => ItemEquals(i, item)))
+                if (!ContainsItemKey(editedItems, item))
                 {
                     editedItems.Add(item, true);
 
@@ -2876,7 +3765,8 @@ namespace Radzen.Blazor
         /// <param name="item">The item.</param>
         public async System.Threading.Tasks.Task UpdateRow(TItem item)
         {
-            if (editedItems.Keys.Any(i => ItemEquals(i, item)))
+            ArgumentNullException.ThrowIfNull(item);
+            if (ContainsItemKey(editedItems, item))
             {
                 var editContext = editContexts.FirstOrDefault(i => ItemEquals(i.Key, item)).Value;
 
@@ -2904,6 +3794,7 @@ namespace Radzen.Blazor
         /// Cancels the edited row.
         /// </summary>
         /// <param name="item">The item.</param>
+        [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage(TrimMessages.Trimming, TrimMessages.IL2026, Justification = TrimMessages.DataTypePreserved)]
         public void CancelEditRow(TItem item)
         {
             if (itemsToInsert.Contains(item))
@@ -2933,7 +3824,7 @@ namespace Radzen.Blazor
             }
             else
             {
-                if (editedItems.Keys.Any(i => ItemEquals(i, item)))
+                if (ContainsItemKey(editedItems, item))
                 {
                     editedItems.Remove(item);
                     editContexts.Remove(item);
@@ -2949,9 +3840,10 @@ namespace Radzen.Blazor
         /// <param name="items">The range of rows.</param>
         public void CancelEditRows(IEnumerable<TItem> items)
         {
+            ArgumentNullException.ThrowIfNull(items);
             foreach (TItem item in items)
             {
-                if (editedItems.Keys.Any(i => ItemEquals(i, item)))
+                if (ContainsItemKey(editedItems, item))
                 {
                     editedItems.Remove(item);
                     editContexts.Remove(item);
@@ -2967,10 +3859,10 @@ namespace Radzen.Blazor
         /// <returns><c>true</c> if row in edit mode; otherwise, <c>false</c>.</returns>
         public bool IsRowInEditMode(TItem item)
         {
-            return editedItems.Keys.Any(i => ItemEquals(i, item));
+            return ContainsItemKey(editedItems, item);
         }
 
-        IList<TItem> itemsToInsert = new List<TItem>();
+        List<TItem> itemsToInsert = new List<TItem>();
 
         /// <summary>
         /// Inserts new row.
@@ -2988,11 +3880,14 @@ namespace Radzen.Blazor
         /// <param name="rowItem">Row item to insert after</param>
         public async System.Threading.Tasks.Task InsertAfterRow(TItem itemToInsert, TItem rowItem)
         {
+            ArgumentNullException.ThrowIfNull(itemToInsert);
+            ArgumentNullException.ThrowIfNull(rowItem);
             var list = this.PagedView.ToList();
             var index = list.IndexOf(rowItem);
             await InsertRowAtIndex(itemToInsert, index + 1);
         }
 
+        [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage(TrimMessages.Trimming, TrimMessages.IL2026, Justification = TrimMessages.DataTypePreserved)]
         private async System.Threading.Tasks.Task InsertRowAtIndex(TItem item, int insertIndex = 0)
         {
             itemsToInsert.Add(item);
@@ -3034,7 +3929,20 @@ namespace Radzen.Blazor
 
         internal List<SortDescriptor> sorts = new List<SortDescriptor>();
 
-        internal void SetColumnSortOrder(RadzenDataGridColumn<TItem> column)
+        internal void SetNextColumnSortOrder(RadzenDataGridColumn<TItem> column)
+        {
+            var sequence = column.SortOrderSequence;
+
+            var pos = Array.IndexOf(sequence, column.GetSortOrder());
+
+            var nextSortOrder = pos == -1 || pos + 1 >= sequence.Length
+                ? sequence.FirstOrDefault()
+                : sequence[pos + 1];
+
+            SetColumnSortOrder(column, nextSortOrder);
+        }
+
+        private void SetColumnSortOrder(RadzenDataGridColumn<TItem> column, SortOrder? sortOrder)
         {
             if (!AllowMultiColumnSorting)
             {
@@ -3046,125 +3954,144 @@ namespace Radzen.Blazor
             }
 
             var descriptor = sorts.Where(d => d.Property == column?.GetSortProperty()).FirstOrDefault();
-            if (descriptor == null)
-            {
-                descriptor = new SortDescriptor() { Property = column.GetSortProperty() };
-            }
 
-            if (column.GetSortOrder() == null)
+            column.SetSortOrderInternal(sortOrder);
+
+            if (!sortOrder.HasValue)
             {
-                column.SetSortOrderInternal(SortOrder.Ascending);
-                descriptor.SortOrder = SortOrder.Ascending;
-            }
-            else if (column.GetSortOrder() == SortOrder.Ascending)
-            {
-                column.SetSortOrderInternal(SortOrder.Descending);
-                descriptor.SortOrder = SortOrder.Descending;
-            }
-            else if (column.GetSortOrder() == SortOrder.Descending)
-            {
-                column.SetSortOrderInternal(null);
-                if (sorts.Where(d => d.Property == column?.GetSortProperty()).Any())
+                if (descriptor != null)
                 {
                     sorts.Remove(descriptor);
                 }
-                descriptor = null;
+
+                return;
             }
 
-            if (descriptor != null && !sorts.Where(d => d.Property == column?.GetSortProperty()).Any())
+            if (descriptor == null)
             {
+                descriptor = new SortDescriptor()
+                {
+                    Property = column.GetSortProperty(),
+                    SortOrder = sortOrder,
+                };
+
                 sorts.Add(descriptor);
+
+                return;
             }
+
+            descriptor.SortOrder = sortOrder;
         }
 
-        void GroupsCollectionChanged(object sender, NotifyCollectionChangedEventArgs args)
+        void RestoreGroupedColumnVisibility()
         {
-            if (args.Action == NotifyCollectionChangedAction.Add)
+            foreach (var entry in groupedColumns)
             {
-                RadzenDataGridColumn<TItem> column;
-                column = columns.FirstOrDefault(c => c.GetGroupProperty() == ((GroupDescriptor)args.NewItems[0]).Property);
-
-                if(column == null)
-                {
-                   column = allColumns.FirstOrDefault(c => c.GetGroupProperty() == ((GroupDescriptor)args.NewItems[0]).Property);
-                }
-
-                if (column != null && HideGroupedColumn)
-                {
-                    column.SetVisible(false);
-                    if (!groupedColumns.Contains(column))
-                    {
-                        groupedColumns.Add(column);
-                    }
-                }
-            }
-            else if (args.Action == NotifyCollectionChangedAction.Remove)
-            {
-                RadzenDataGridColumn<TItem> column;
-                column = columns.FirstOrDefault(c => c.GetGroupProperty() == ((GroupDescriptor)args.OldItems[0]).Property);
-
-                if (column == null)
-                {
-                    column = allColumns.FirstOrDefault(c => c.GetGroupProperty() == ((GroupDescriptor)args.OldItems[0]).Property);
-                }
-
-                if (column != null && HideGroupedColumn)
-                {
-                    column.SetVisible(true);
-                    if (groupedColumns.Contains(column))
-                    {
-                        groupedColumns.Remove(column);
-                    }
-                }
-            }
-            else if (args.Action == NotifyCollectionChangedAction.Reset)
-            {
-                foreach (var column in groupedColumns)
-                {
-                    if (HideGroupedColumn)
-                    {
-                        column.SetVisible(true);
-                    }
-                }
+                entry.Key.SetVisible(entry.Value);
             }
 
-            SaveSettings();
+            groupedColumns.Clear();
         }
 
-        List<RadzenDataGridColumn<TItem>> groupedColumns = new List<RadzenDataGridColumn<TItem>>();
+        void ApplyGroupedColumnVisibility(RadzenDataGridColumn<TItem> column)
+        {
+            if (HideGroupedColumn && groups != null && groups.Any(g => g.Property == column.GetGroupProperty()))
+            {
+                if (!groupedColumns.ContainsKey(column))
+                {
+                    groupedColumns.Add(column, column.GetVisible());
+                }
+
+                column.SetVisible(false);
+            }
+        }
+
+        void ApplyGroupedColumnVisibility()
+        {
+            foreach (var column in allColumns)
+            {
+                ApplyGroupedColumnVisibility(column);
+            }
+        }
+
+        void SynchronizeGroupedColumnVisibility()
+        {
+            RestoreGroupedColumnVisibility();
+            ApplyGroupedColumnVisibility();
+        }
+
+        void SetGroupsCollection(ObservableCollection<GroupDescriptor>? value)
+        {
+            if (ReferenceEquals(groups, value))
+            {
+                return;
+            }
+
+            if (groups != null)
+            {
+                groups.CollectionChanged -= GroupsCollectionChanged;
+            }
+
+            groups = value;
+
+            if (groups != null)
+            {
+                groups.CollectionChanged += GroupsCollectionChanged;
+            }
+
+            _groupedPagedView = null;
+            SynchronizeGroupedColumnVisibility();
+        }
+
+        bool suppressGroupsCollectionChanged;
+
+        void GroupsCollectionChanged(object? sender, NotifyCollectionChangedEventArgs args)
+        {
+            _groupedPagedView = null;
+
+            if (suppressGroupsCollectionChanged)
+            {
+                return;
+            }
+
+            SynchronizeGroupedColumnVisibility();
+            SaveSettings();
+            InvokeAsync(StateHasChanged);
+        }
+
+        Dictionary<RadzenDataGridColumn<TItem>, bool> groupedColumns = new Dictionary<RadzenDataGridColumn<TItem>, bool>();
         /// <summary>
         /// Gets or sets the group descriptors.
         /// </summary>
-        /// <value>The groups.</value>
+        /// <value>The groups. Use a stable collection instance when grouping can be changed interactively.</value>
+        [Parameter]
         public ObservableCollection<GroupDescriptor> Groups
         {
             get
             {
                 if (groups == null)
                 {
-                    groups = new ObservableCollection<GroupDescriptor>();
-                    groups.CollectionChanged -= GroupsCollectionChanged;
-                    groups.CollectionChanged += GroupsCollectionChanged;
+                    SetGroupsCollection(new ObservableCollection<GroupDescriptor>());
                 }
 
-                return groups;
+                return groups!;
             }
             set
             {
-                groups = value;
+                SetGroupsCollection(value);
             }
         }
 
-        ObservableCollection<GroupDescriptor> groups;
+        ObservableCollection<GroupDescriptor>? groups;
 
         internal async Task EndColumnDropToGroup()
         {
-            if(indexOfColumnToReoder != null && uniqueIDOfColumnToReoder != null && AllowGrouping)
+            if(indexOfColumnToReoder != null && uniqueIDOfColumnToReoder != null && AllowGrouping && JSRuntime != null)
             {
-                var functionName = $"Radzen['{getColumnUniqueId(indexOfColumnToReoder.Value)}end']";
-                await JSRuntime.InvokeVoidAsync("eval", $"{functionName} && {functionName}()");
+                var callbackKey = $"{getColumnUniqueId(indexOfColumnToReoder.Value)}end";
+                await JSRuntime.InvokeVoidAsync("Radzen.invokeRadzenCallback", callbackKey);
 
-                var column = allColumns.Where(c => (c.UniqueID ?? c.Property) == uniqueIDOfColumnToReoder).FirstOrDefault();
+                var column = allColumns.Where(c => (!string.IsNullOrEmpty(c.UniqueID) ? c.UniqueID : c.Property) == uniqueIDOfColumnToReoder).FirstOrDefault();
 
                 if (column != null && column.Groupable && !string.IsNullOrEmpty(column.GetGroupProperty()))
                 {
@@ -3212,26 +4139,32 @@ namespace Radzen.Blazor
             }
         }
 
-        ObservableCollection<SortDescriptor> sortDescriptors;
+        ObservableCollection<SortDescriptor>? sortDescriptors;
 
-        void SortsCollectionChanged(object sender, NotifyCollectionChangedEventArgs args)
+        void SortsCollectionChanged(object? sender, NotifyCollectionChangedEventArgs args)
         {
-            if (args.Action == NotifyCollectionChangedAction.Add)
+            if (args.Action == NotifyCollectionChangedAction.Add && args.NewItems is { Count: > 0 } newItems && newItems[0] is SortDescriptor newDescriptor)
             {
-                var column = columns.Where(c => c.GetSortProperty() == ((SortDescriptor)args.NewItems[0]).Property).FirstOrDefault();
+                var column = columns.FirstOrDefault(c => c.GetSortProperty() == newDescriptor.Property);
 
                 if (column != null)
                 {
-                    column.SetSortOrder(((SortDescriptor)args.NewItems[0]).SortOrder);
+                    column.SetSortOrder(newDescriptor.SortOrder);
                 }
             }
-            else if (args.Action == NotifyCollectionChangedAction.Remove)
+            else if (args.Action == NotifyCollectionChangedAction.Remove && args.OldItems is { Count: > 0 } oldItems && oldItems[0] is SortDescriptor oldDescriptor)
             {
-                var column = columns.Where(c => c.GetSortProperty() == ((SortDescriptor)args.OldItems[0]).Property).FirstOrDefault();
+                var column = columns.FirstOrDefault(c => c.GetSortProperty() == oldDescriptor.Property);
 
                 if (column != null)
                 {
                     column.ResetSortOrder();
+                }
+
+                var existing = sorts.FirstOrDefault(d => d.Property == oldDescriptor.Property);
+                if (existing != null)
+                {
+                    sorts.Remove(existing);
                 }
             }
             else if (args.Action == NotifyCollectionChangedAction.Reset)
@@ -3240,6 +4173,8 @@ namespace Radzen.Blazor
                 {
                     c.ResetSortOrder();
                 });
+
+                sorts.Clear();
             }
 
             SaveSettings();
@@ -3252,13 +4187,14 @@ namespace Radzen.Blazor
         /// <param name="property">The property name.</param>
         public void OrderBy(string property)
         {
+            ArgumentNullException.ThrowIfNull(property);
             var p = IsOData() ? property.Replace('.', '/') : PropertyAccess.GetProperty(property);
 
             var column = allColumns.ToList().Where(c => c.GetSortProperty() == property).FirstOrDefault();
 
             if (column != null)
             {
-                SetColumnSortOrder(column);
+                SetColumnSortOrder(column, SortOrder.Ascending);
                 Sort.InvokeAsync(new DataGridColumnSortEventArgs<TItem>() { Column = column, SortOrder = column.GetSortOrder() });
                 SaveSettings();
             }
@@ -3278,15 +4214,14 @@ namespace Radzen.Blazor
         /// <param name="property">The property name.</param>
         public void OrderByDescending(string property)
         {
+            ArgumentNullException.ThrowIfNull(property);
             var p = IsOData() ? property.Replace('.', '/') : PropertyAccess.GetProperty(property);
 
             var column = allColumns.ToList().Where(c => c.GetSortProperty() == p).FirstOrDefault();
 
             if (column != null)
             {
-                column.SetSortOrderInternal(SortOrder.Ascending);
-                SetColumnSortOrder(column);
-
+                SetColumnSortOrder(column, SortOrder.Descending);
                 Sort.InvokeAsync(new DataGridColumnSortEventArgs<TItem>() { Column = column, SortOrder = column.GetSortOrder() });
                 SaveSettings();
             }
@@ -3301,36 +4236,16 @@ namespace Radzen.Blazor
         }
 
         /// <inheritdoc />
-        protected override string GetComponentCssClass()
-        {
-            var additionalClasses = new List<string>();
-
-            if (CurrentStyle.ContainsKey("height"))
-            {
-                additionalClasses.Add("rz-has-height");
-            }
-
-            if (RowSelect.HasDelegate || ValueChanged.HasDelegate || SelectionMode == DataGridSelectionMode.Multiple)
-            {
-                additionalClasses.Add("rz-selectable");
-            }
-
-            if (Responsive)
-            {
-                additionalClasses.Add("rz-datatable-reflow");
-            }
-
-            if (Density == Density.Compact)
-            {
-                additionalClasses.Add("rz-density-compact");
-            }
-
-            return $"rz-has-pager rz-datatable  rz-datatable-scrollable {String.Join(" ", additionalClasses)}";
-        }
+        protected override string GetComponentCssClass() => ClassList.Create("rz-has-pager rz-datatable rz-datatable-scrollable")
+            .Add("rz-has-height", CurrentStyle.ContainsKey("height"))
+            .Add("rz-datatable-reflow", Responsive)
+            .Add("rz-density-compact", Density == Density.Compact)
+            .Add("rz-selectable", RowSelect.HasDelegate || ValueChanged.HasDelegate || SelectionMode == DataGridSelectionMode.Multiple)
+            .ToString();
 
         internal string getHeaderStyle()
         {
-            var additionalStyle = Style != null && Style.IndexOf("height:") != -1 ? "padding-right: 17px;" : "";
+            var additionalStyle = Style != null && Style.Contains("height:", StringComparison.Ordinal) ? "padding-right: 17px;" : "";
             return $"margin-left:0px;{additionalStyle}";
         }
 
@@ -3349,22 +4264,111 @@ namespace Radzen.Blazor
         }
 
         /// <inheritdoc />
+        protected override void OnBecameInvisible()
+        {
+            base.OnBecameInvisible();
+
+            if (IsJSRuntimeAvailable && JSRuntime != null)
+            {
+                foreach (var column in allColumns.ToList().Where(c => c.GetVisible()))
+                {
+                    JSRuntime.InvokeVoid("Radzen.destroyPopup", $"{PopupID}{column.GetFilterProperty()}");
+                }
+            }
+        }
+
+        /// <inheritdoc />
         public override void Dispose()
         {
             base.Dispose();
+
+            _jsRefVersion++;
+            var jsRef = _jsRef;
+            _jsRef = null;
+            jsRef?.InvokeVoid("dispose");
+            jsRef?.DisposeFireAndForget();
 
             if (groups != null)
             {
                 groups.CollectionChanged -= GroupsCollectionChanged;
             }
 
-            if (IsJSRuntimeAvailable)
+            if (sortDescriptors != null)
+            {
+                sortDescriptors.CollectionChanged -= SortsCollectionChanged;
+            }
+
+            if (IsJSRuntimeAvailable && JSRuntime != null)
             {
                 foreach (var column in allColumns.ToList().Where(c => c.GetVisible()))
                 {
-                    JSRuntime.InvokeVoidAsync("Radzen.destroyPopup", $"{PopupID}{column.GetFilterProperty()}");
+                    JSRuntime.InvokeVoid("Radzen.destroyPopup", $"{PopupID}{column.GetFilterProperty()}");
                 }
             }
+
+            if (expandedItems != null)
+            {
+                expandedItems.Clear();
+            }
+
+            if (editedItems != null)
+            {
+                editedItems.Clear();
+            }
+
+            if (editContexts != null)
+            {
+                editContexts.Clear();
+            }
+
+            if (childData != null)
+            {
+                childData.Clear();
+            }
+
+            if (selectedItems != null)
+            {
+                selectedItems.Clear();
+            }
+
+            if (rowSpans != null)
+            {
+                rowSpans.Clear();
+            }
+
+            if (columns != null)
+            {
+                columns.Clear();
+            }
+
+            if (allPickableColumns != null)
+            {
+                allPickableColumns.Clear();
+            }
+
+            if (allColumns != null)
+            {
+                allColumns.Clear();
+            }
+
+            if (childColumns != null)
+            {
+                childColumns.Clear();
+            }
+
+            _value = null;
+            Data = null;
+            _view = null;
+            _groupedPagedView = null;
+
+            if (Query != null)
+            {
+                Query.GetFilter = null;
+                Query.Filters = null;
+                Query.Sorts = null;
+            }
+
+            GC.SuppressFinalize(this);
         }
 
         internal int deepestChildColumnLevel;
@@ -3385,9 +4389,9 @@ namespace Radzen.Blazor
         public EventCallback<int> PageSizeChanged { get; set; }
 
         /// <summary>
-        /// Gets DataGrid settings as JSON string.
+        /// Saves DataGrid settings as JSON string.
         /// </summary>
-        internal void SaveSettings()
+        public void SaveSettings()
         {
             if (SettingsChanged.HasDelegate && canSaveSettings)
             {
@@ -3401,7 +4405,7 @@ namespace Radzen.Blazor
                         UniqueID = c.UniqueID,
                         Property = c.Property,
                         Width = c.GetWidth(),
-                        Visible = c.GetVisible(),
+                        Visible = groupedColumns.TryGetValue(c, out var visibleBeforeGrouping) ? visibleBeforeGrouping : c.GetVisible(),
                         OrderIndex = c.GetOrderIndex(),
                         SortOrder = c.GetSortOrder(),
                         SortIndex = c.GetSortIndex(),
@@ -3410,7 +4414,8 @@ namespace Radzen.Blazor
                         SecondFilterValue = c.GetSecondFilterValue(),
                         SecondFilterOperator = c.GetSecondFilterOperator(),
                         LogicalFilterOperator = c.GetLogicalFilterOperator(),
-                        CustomFilterExpression = c.GetCustomFilterExpression()
+                        CustomFilterExpression = c.GetCustomFilterExpression(),
+                        CollectionFilterMode = c.GetCollectionFilterMode()
                     }).ToList(),
                     CurrentPage = CurrentPage,
                     PageSize = PageSize,
@@ -3422,13 +4427,49 @@ namespace Radzen.Blazor
         }
 
         /// <summary>
-        /// Load DataGrid settings saved from GetSettings() method.
+        /// Override this method to customize how filter values are serialized back typed from the settings.
         /// </summary>
-        internal async Task LoadSettingsInternal(DataGridSettings settings)
+        /// <param name="gridColumn">Grid colum to set.</param>
+        /// <param name="columnSettings">Setting of the column.</param>
+        /// <param name="isFirst">Handle first or second filter value.</param>
+        /// <returns>Returns true if state should update.</returns>
+        public virtual bool SetColumnFilterValueFromSettings(RadzenDataGridColumn<TItem> gridColumn, DataGridColumnSettings columnSettings, bool isFirst)
+        {
+            ArgumentNullException.ThrowIfNull(gridColumn);
+            ArgumentNullException.ThrowIfNull(columnSettings);
+
+            var filterPropertyType = gridColumn.FilterPropertyType;
+
+            // Fix nested property settings load issue
+            // GetFilterValue reads settings as list only if the filterProperty type is IEnumerable and the settings value is JsonElement array.
+            if ( columnSettings.FilterValue is JsonElement jsonElement && jsonElement.ValueKind != JsonValueKind.Array
+                && !typeof(string).IsAssignableFrom(gridColumn.FilterPropertyType) && (typeof(IEnumerable<>).IsAssignableFrom(gridColumn.FilterPropertyType) || typeof(IEnumerable).IsAssignableFrom(gridColumn.FilterPropertyType)))
+            {
+                filterPropertyType = PropertyAccess.GetElementType(gridColumn.FilterPropertyType);
+            }
+
+            var firstValue = isFirst ? gridColumn.GetFilterValue() : gridColumn.GetSecondFilterValue();
+            var secondValue = GetFilterValue(isFirst ? columnSettings.FilterValue : columnSettings.SecondFilterValue, filterPropertyType);
+            if (filterPropertyType != null && !AreObjectsEqual(firstValue, secondValue))
+            {
+                gridColumn.SetFilterValue(GetFilterValue(isFirst ? columnSettings.FilterValue : columnSettings.SecondFilterValue, filterPropertyType), isFirst);
+                return true;
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// Load DataGrid settings saved from the GetSettings() method.
+        /// This internal method handles the actual loading or updating of the DataGrid settings.
+        /// </summary>
+        /// <param name="settings">The DataGridSettings object containing the settings to be loaded.</param>
+        /// <param name="forceUpdate">If true, forces an update of the settings even if they haven't changed. Default is false.</param>
+        internal async Task LoadSettingsInternal(DataGridSettings settings, bool forceUpdate = false)
         {
             if (SettingsChanged.HasDelegate)
             {
-                var shouldUpdateState = false;
+                var shouldUpdateState = forceUpdate;
                 var hasFilter = settings.Columns != null && settings.Columns.Any(c =>
                     c.FilterValue != null || c.SecondFilterValue != null ||
                     c.FilterOperator == FilterOperator.IsNull || c.FilterOperator == FilterOperator.IsNotNull ||
@@ -3436,14 +4477,16 @@ namespace Radzen.Blazor
                     c.SecondFilterOperator == FilterOperator.IsNull || c.SecondFilterOperator == FilterOperator.IsNotNull ||
                     c.SecondFilterOperator == FilterOperator.IsEmpty || c.SecondFilterOperator == FilterOperator.IsNotEmpty);
 
+                RestoreGroupedColumnVisibility();
+
                 if (settings.Columns != null)
                 {
                     var allColumns = ColumnsCollection.Concat(ColumnsCollection.SelectManyRecursive(c => c.ColumnsCollection));
 
                     foreach (var column in settings.Columns.OrderBy(c => c.SortIndex))
                     {
-                        var gridColumn = allColumns.Where(c => !string.IsNullOrEmpty(column.Property) && c.Property == column.Property).FirstOrDefault() ??
-                                allColumns.Where(c => !string.IsNullOrEmpty(column.UniqueID) && c.UniqueID == column.UniqueID).FirstOrDefault();
+                        var gridColumn = allColumns.Where(c => !string.IsNullOrEmpty(column.UniqueID) && c.UniqueID == column.UniqueID).FirstOrDefault() ?? 
+                            allColumns.Where(c => !string.IsNullOrEmpty(column.Property) && c.Property == column.Property).FirstOrDefault();
                         if (gridColumn != null)
                         {
                             // Sorting
@@ -3457,8 +4500,8 @@ namespace Radzen.Blazor
 
                     foreach (var column in settings.Columns)
                     {
-                        var gridColumn = allColumns.Where(c => !string.IsNullOrEmpty(column.Property) && c.Property == column.Property).FirstOrDefault() ??
-                                allColumns.Where(c => !string.IsNullOrEmpty(column.UniqueID) && c.UniqueID == column.UniqueID).FirstOrDefault();
+                        var gridColumn = allColumns.Where(c => !string.IsNullOrEmpty(column.UniqueID) && c.UniqueID == column.UniqueID).FirstOrDefault() ?? 
+                            allColumns.Where(c => !string.IsNullOrEmpty(column.Property) && c.Property == column.Property).FirstOrDefault();
                         if (gridColumn != null)
                         {
                             // Visibility
@@ -3469,7 +4512,7 @@ namespace Radzen.Blazor
                             }
 
                             // Width
-                            if (gridColumn.GetWidth() != column.Width)
+                            if (gridColumn.GetWidth() != column.Width && !string.IsNullOrEmpty(column.Width))
                             {
                                 gridColumn.SetWidth(column.Width);
                                 shouldUpdateState = true;
@@ -3483,9 +4526,8 @@ namespace Radzen.Blazor
                             }
 
                             // Filtering
-                            if (!AreObjectsEqual(gridColumn.GetFilterValue(), GetFilterValue(column.FilterValue, gridColumn.FilterPropertyType)))
+                            if( SetColumnFilterValueFromSettings(gridColumn, column, true))
                             {
-                                gridColumn.SetFilterValue(GetFilterValue(column.FilterValue, gridColumn.FilterPropertyType));
                                 shouldUpdateState = true;
                             }
 
@@ -3495,9 +4537,9 @@ namespace Radzen.Blazor
                                 shouldUpdateState = true;
                             }
 
-                            if (!AreObjectsEqual(gridColumn.GetSecondFilterValue(), GetFilterValue(column.SecondFilterValue, gridColumn.FilterPropertyType)))
+                            // 2nd filter value
+                            if( SetColumnFilterValueFromSettings(gridColumn, column, false))
                             {
-                                gridColumn.SetFilterValue(GetFilterValue(column.SecondFilterValue, gridColumn.FilterPropertyType), false);
                                 shouldUpdateState = true;
                             }
 
@@ -3510,6 +4552,12 @@ namespace Radzen.Blazor
                             if (gridColumn.GetLogicalFilterOperator() != column.LogicalFilterOperator)
                             {
                                 gridColumn.SetLogicalFilterOperator(column.LogicalFilterOperator);
+                                shouldUpdateState = true;
+                            }
+
+                            if (gridColumn.GetCollectionFilterMode() != column.CollectionFilterMode)
+                            {
+                                gridColumn.SetCollectionFilterMode(column.CollectionFilterMode);
                                 shouldUpdateState = true;
                             }
 
@@ -3526,12 +4574,23 @@ namespace Radzen.Blazor
 
                 if (settings.Groups != null && !settings.Groups.SequenceEqual(Groups))
                 {
-                    groups.CollectionChanged -= GroupsCollectionChanged;
-                    Groups.Clear();
-                    settings.Groups.ToList().ForEach(Groups.Add);
+                    var settingsGroups = settings.Groups.ToList();
+                    suppressGroupsCollectionChanged = true;
+
+                    try
+                    {
+                        Groups.Clear();
+                        settingsGroups.ForEach(Groups.Add);
+                    }
+                    finally
+                    {
+                        suppressGroupsCollectionChanged = false;
+                    }
+
                     shouldUpdateState = true;
-                    groups.CollectionChanged += GroupsCollectionChanged;
                 }
+
+                ApplyGroupedColumnVisibility();
 
                 if (settings.CurrentPage != null && settings.CurrentPage != CurrentPage)
                 {
@@ -3564,42 +4623,42 @@ namespace Radzen.Blazor
             }
         }
 
-		/// <summary>
-		/// Compares two objects for equality.
-		/// </summary>
-		/// <param name="object1">The first object to compare.</param>
-		/// <param name="object2">The second object to compare.</param>
-		/// <returns>True if the objects are equal, false otherwise.</returns>
-		private static bool AreObjectsEqual(object object1, object object2)
-		{
-			// If both objects are null, they are considered equal
-			if (object1 == null && object2 == null)
-			{
-				return true;
-			}
+        /// <summary>
+        /// Compares two objects for equality.
+        /// </summary>
+        /// <param name="object1">The first object to compare.</param>
+        /// <param name="object2">The second object to compare.</param>
+        /// <returns>True if the objects are equal, false otherwise.</returns>
+        private static bool AreObjectsEqual(object? object1, object? object2)
+        {
+            // If both objects are null, they are considered equal
+            if (object1 == null && object2 == null)
+            {
+                return true;
+            }
 
-			// If only one of the objects is null, they are considered not equal
-			if (object1 == null || object2 == null)
-			{
-				return false;
-			}
+            // If only one of the objects is null, they are considered not equal
+            if (object1 == null || object2 == null)
+            {
+                return false;
+            }
 
-			// If both objects are enumerable, compare their elements
-			if (object1 is IEnumerable list1 && object2 is IEnumerable list2)
-			{
-				// Create hash sets from the enumerable objects
-				var set1 = new HashSet<object>(list1.Cast<object>());
-				var set2 = new HashSet<object>(list2.Cast<object>());
+            // If both objects are enumerable, compare their elements
+            if (object1 is IEnumerable list1 && object2 is IEnumerable list2)
+            {
+                // Create hash sets from the enumerable objects
+                var set1 = new HashSet<object>(list1.Cast<object>());
+                var set2 = new HashSet<object>(list2.Cast<object>());
 
-				// Check if the hash sets are equal
-				return set1.SetEquals(set2);
-			}
+                // Check if the hash sets are equal
+                return set1.SetEquals(set2);
+            }
 
-			// If the objects are not enumerable, compare them using the Equals method
-			return object1.Equals(object2);
-		}
+            // If the objects are not enumerable, compare them using the Equals method
+            return object1.Equals(object2);
+        }
 
-		object GetFilterValue(object value, Type type)
+        private static object? GetFilterValue(object? value, Type? type)
         {
             if (value != null && value is JsonElement)
             {
@@ -3615,6 +4674,18 @@ namespace Radzen.Blazor
                 else if (type == typeof(Int64) || type == typeof(Int64?))
                 {
                     return element.GetInt64();
+                }
+                else if (type == typeof(UInt16) || type == typeof(UInt16?))
+                {
+                    return element.GetUInt16();
+                }
+                else if (type == typeof(UInt32) || type == typeof(UInt32?))
+                {
+                    return element.GetUInt32();
+                }
+                else if (type == typeof(UInt64) || type == typeof(UInt64?))
+                {
+                    return element.GetUInt64();
                 }
                 else if (type == typeof(double) || type == typeof(double?))
                 {
@@ -3636,24 +4707,33 @@ namespace Radzen.Blazor
                 {
                     return element.GetDateTime();
                 }
+                else if (type == typeof(DateOnly) || type == typeof(DateOnly?))
+                {
+                    return DateOnly.FromDateTime(element.GetDateTime());
+                }
+                else if (type == typeof(TimeOnly) || type == typeof(TimeOnly?))
+                {
+                    return TimeOnly.FromDateTime(element.GetDateTime());
+                }
                 else if (type == typeof(DateTimeOffset) || type == typeof(DateTimeOffset?))
                 {
                     return element.GetDateTimeOffset();
                 }
-                else if (type.IsEnum || Nullable.GetUnderlyingType(type)?.IsEnum == true)
+                else if (type?.IsEnum == true || type != null && Nullable.GetUnderlyingType(type)?.IsEnum == true)
                 {
                     return element.GetInt32();
                 }
                 else if (!typeof(string).IsAssignableFrom(type) && (typeof(IEnumerable<>).IsAssignableFrom(type) || typeof(IEnumerable).IsAssignableFrom(type)))
                 {
-                    var valueType = type.GetGenericArguments().Any() ? type.GetGenericArguments().FirstOrDefault() : typeof(object);
-                    var list = (IList)Activator.CreateInstance(typeof(List<>).MakeGenericType(valueType));
+                    var genericArgs = type.GetGenericArguments();
+                    var valueType = genericArgs.Length > 0 ? genericArgs[0] : typeof(object);
+                    var list = (IList?)Activator.CreateInstance(typeof(List<>).MakeGenericType(valueType));
 
                     if (element.ValueKind == JsonValueKind.Array)
                     {
                         foreach (var v in element.EnumerateArray())
                         {
-                            list.Add(GetFilterValue(v, valueType));
+                            list?.Add(GetFilterValue(v, valueType));
                         }
                     }
 
@@ -3683,13 +4763,13 @@ namespace Radzen.Blazor
 
         bool canSaveSettings = true;
 
-        DataGridSettings settings;
+        DataGridSettings? settings;
 
         /// <summary>
         /// Gets or sets DataGrid settings.
         /// </summary>
         [Parameter]
-        public DataGridSettings Settings
+        public DataGridSettings? Settings
         {
             get
             {
@@ -3709,7 +4789,7 @@ namespace Radzen.Blazor
                         CurrentPage = 0;
                         skip = 0;
                         Reset(true);
-                        columns = allColumns.Where(c => c.Parent == null).ToList();
+                        UpdateColumnsOrder();
                         InvokeAsync(Reload);
 
                         canSaveSettings = true;
@@ -3731,6 +4811,14 @@ namespace Radzen.Blazor
             SaveSettings();
 
             await OnPageChanged(args);
+        }
+
+        /// <inheritdoc />
+        protected override void OnInitialized()
+        {
+            focusedIndex = focusedIndex == -1 ? 0 : focusedIndex;
+
+            base.OnInitialized();
         }
     }
 }

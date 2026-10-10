@@ -1,11 +1,11 @@
 @page "/accessibility"
 
-<PageTitle>Blazor Accessibility | Free UI Components by Radzen</PageTitle>
+<PageTitle>Blazor Accessibility | Free Radzen Blazor</PageTitle>
 <HeadContent>
-    <meta name="description" content="The accessible Radzen Blazor Components library covers highest levels of web accessibility guidelines and recommendations, making you Blazor app compliant with WAI-ARIA, WCAG 2.2, section 508, and keyboard compatibility standards.">
+    <meta name="description" content="The accessible Radzen Blazor Components library covers highest levels of web accessibility guidelines and recommendations, making your Blazor app compliant with WAI-ARIA, WCAG 2.2, section 508, and keyboard compatibility standards.">
 </HeadContent>
 <RadzenText TextStyle="TextStyle.H2" TagName="TagName.H1" class="rz-pt-8">
-    Accessibility
+    Blazor Accessibility
 </RadzenText>
 <RadzenText TextStyle="TextStyle.Subtitle1" TagName="TagName.P">
     Radzen Blazor Components library prioritizes accessibility for all users by adhering to the highest levels of web accessibility guidelines and recommendations. It can help you make your Blazor app accessible and compliant with WAI-ARIA, WCAG 2.2, Section 508, and keyboard compatibility standards.
@@ -55,13 +55,13 @@
 </pre>
 
 <RadzenText Anchor="accessibility#high-contrast-colors" TextStyle="TextStyle.H5" TagName="TagName.H2" class="rz-pt-12">
-    High Contrast theme colors <RadzenBadge title="To use it in your application you need an active Radzen Professional or Enterprise subscription." Style="vertical-align: top;">PRO</RadzenBadge> 
+    High Contrast theme colors <RadzenBadge title="To use it in your application you need an active Radzen Blazor subscription." Style="vertical-align: top;">PRO</RadzenBadge> 
 </RadzenText>
 <RadzenText TextStyle="TextStyle.Body1">
     Higher contrast makes app content easier to look at and quicker to read. 
 </RadzenText>
 <RadzenAlert AlertStyle="AlertStyle.Info" Shade="Shade.Lighter" AllowClose="false">
-    HighContrast swatches are a premium feature available in Radzen Blazor Studio with an active Radzen Professional or Enterprise subscription. <RadzenLink Path="https://www.radzen.com/blazor-studio/documentation/appearance/themes-and-swatches/#swatches" Text="Read more ..." target="_blank" />
+    HighContrast swatches are a premium feature available in Radzen Blazor Studio with an active Radzen Blazor subscription. <RadzenLink Path="https://www.radzen.com/blazor-studio/documentation/appearance/themes-and-swatches/#swatches" Text="Read more ..." target="_blank" />
 </RadzenAlert>
 <RadzenImage Path="images/blazor-standard-theme-wcag-highcontrast.png" Style="width: 100%;" class="rz-my-6 rz-border-radius-4" AlternateText="Radzen Blazor Standard theme with default, WCAG AA, and HighContrast WCAG AAA colors" />
 
@@ -115,6 +115,19 @@ Radzen.Blazor provides appropriate labels, roles, and descriptions to enable scr
 </RadzenText>
 
 <KeyboardNavigationDataGrid Data="@shortcuts" />
+
+<RadzenText Anchor="accessibility#acr" TextStyle="TextStyle.H5" TagName="TagName.H2" class="rz-pt-12">
+    Accessibility Conformance Report (ACR)
+</RadzenText>
+<RadzenText TextStyle="TextStyle.Body1">
+    Radzen Blazor Components ACR is based on an ITI VPAT® format covering Section 508 (U.S.), EN 301 549 (EU), and W3C/WAI WCAG.
+</RadzenText>
+<RadzenText TextStyle="TextStyle.Body1">
+    The use of Radzen Blazor Components does not constitute and guarantee that the end-user software will be compliant with accessibility standards and guidelines. The components provide means to developers to cover the required accessibility criteria and functionalities.
+</RadzenText>
+<RadzenText TextStyle="TextStyle.Body1">
+    <RadzenLink Path="https://cdn.radzen.com/VPAT2.5Rev-INT-May2025-Radzen-Blazor-Components.pdf" target="_blank" Title="Download Radzen Blazor Components Accessibility Conformance Report">Download Radzen Blazor Components VPAT</RadzenLink>
+</RadzenText>
 
 @code {
     public List<KeyboardShortcut> shortcuts = new()

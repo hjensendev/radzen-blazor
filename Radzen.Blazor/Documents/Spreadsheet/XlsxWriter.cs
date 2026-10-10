@@ -1,0 +1,3254 @@
+using System;
+using System.Buffers;
+using System.Collections.Generic;
+using System.Globalization;
+using System.IO;
+using System.IO.Compression;
+using System.Linq;
+using System.Runtime.CompilerServices;
+using System.Threading;
+using System.Threading.Tasks;
+using System.Xml;
+using System.Xml.Linq;
+namespace Radzen.Documents.Spreadsheet;
+
+#nullable enable
+
+class XlsxWriter(Workbook sourceWorkbook)
+{
+    private const double EmuPerPixel = 9525.0;
+
+    private static string PixelsToEmu(double pixels) =>
+        ((long)Math.Round(pixels * EmuPerPixel)).ToString(CultureInfo.InvariantCulture);
+
+    private readonly IReadOnlyList<Worksheet> sheets = sourceWorkbook.Sheets;
+
+    private const int ScratchLength = 64;
+
+    private readonly char[] scratch = new char[ScratchLength];
+
+    private readonly Dictionary<string, string> mediaMap = [];
+
+    private int mediaIndex = 1;
+
+    private int tableIndex;
+
+    private const int MaxCellCharacters = 32_767;
+
+    private const int MaxStreamedStyles = 4096;
+
+    private readonly Dictionary<(Format Format, CellDataType Type, bool Quoted), int?> streamedStyles = new(StreamedStyleComparer.Instance);
+
+    private sealed class StreamedStyleComparer : IEqualityComparer<(Format Format, CellDataType Type, bool Quoted)>
+    {
+        public static readonly StreamedStyleComparer Instance = new();
+
+        public bool Equals((Format Format, CellDataType Type, bool Quoted) x, (Format Format, CellDataType Type, bool Quoted) y) =>
+            ReferenceEquals(x.Format, y.Format) && x.Type == y.Type && x.Quoted == y.Quoted;
+
+        public int GetHashCode((Format Format, CellDataType Type, bool Quoted) key) =>
+            HashCode.Combine(RuntimeHelpers.GetHashCode(key.Format), key.Type, key.Quoted);
+    }
+
+    public void Write(Stream stream)
+    {
+        using var session = Begin(stream, streaming: false);
+        End(session);
+    }
+
+    public Task WriteAsync(Stream stream, IAsyncEnumerable<CellData?[]> rows, bool useInlineStrings, CancellationToken cancellationToken) =>
+        WriteAsync(stream, rows, static data => (data, null), useInlineStrings, cancellationToken);
+
+    public Task WriteAsync(Stream stream, IAsyncEnumerable<(CellData? Data, Format? Format)[]> rows, bool useInlineStrings, CancellationToken cancellationToken) =>
+        WriteAsync(stream, rows, static cell => cell, useInlineStrings, cancellationToken);
+
+    private async Task WriteAsync<T>(Stream stream, IAsyncEnumerable<T[]> rows, Func<T, (CellData? Data, Format? Format)> getCell, bool useInlineStrings, CancellationToken cancellationToken)
+    {
+        if (sheets.Count != 1)
+        {
+            throw new InvalidOperationException(
+                $"Rows from a source are appended to a workbook's only sheet, and this workbook has {sheets.Count}.");
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
+
+        using var session = Begin(stream, streaming: true);
+
+        await foreach (var row in rows.WithCancellation(cancellationToken).ConfigureAwait(false))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            Append(session, row, getCell, useInlineStrings);
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
+        End(session);
+    }
+
+    private SaveSession Begin(Stream stream, bool streaming)
+    {
+        var session = new SaveSession(stream);
+
+        try
+        {
+            if (sheets.Count > 0)
+            {
+                BeginSheet(session, 0, streaming);
+            }
+
+            return session;
+        }
+        catch
+        {
+            session.Dispose();
+            throw;
+        }
+    }
+
+    private void End(SaveSession session)
+    {
+        if (session.Sheet is not null)
+        {
+            EndSheet(session);
+        }
+
+        for (var index = 1; index < sheets.Count; index++)
+        {
+            BeginSheet(session, index, streaming: false);
+            EndSheet(session);
+        }
+
+        var archive = session.Archive;
+        SaveWorkbookRelationships(archive, session.SharedStrings);
+        SaveStyles(archive, session.Styles);
+        SaveSharedStrings(archive, session.SharedStrings);
+        SaveWorkbook(archive);
+        SaveTheme(archive);
+        SaveDocPropsCore(archive);
+        SaveDocPropsApp(archive);
+        SaveContentTypes(archive, includeSharedStrings: session.SharedStrings.Count > 0, tableCount: tableIndex);
+        SaveRelationships(archive);
+        archive.Dispose();
+        session.Completed = true;
+    }
+
+    private sealed class SaveSession : IDisposable
+    {
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Usage", "CA2213", Justification = "The destination belongs to the caller and must remain open after saving.")]
+        private readonly Stream destination;
+        private readonly long start;
+
+        public ZipArchive Archive { get; }
+        public StyleTracker Styles { get; } = CreateStylesDocument();
+        public SharedStringTable SharedStrings { get; } = new();
+        public SheetSave? Sheet { get; set; }
+        public bool Completed { get; set; }
+
+        public SaveSession(Stream destination)
+        {
+            this.destination = destination;
+            start = destination.CanSeek ? destination.Position : -1;
+            Archive = new ZipArchive(destination, ZipArchiveMode.Create, leaveOpen: true);
+        }
+
+        public void Dispose()
+        {
+            try
+            {
+                if (!Completed)
+                {
+                    DisposeAfterFailure(Sheet?.Writer);
+                    DisposeAfterFailure(Sheet?.Entry);
+                    DisposeAfterFailure(Archive);
+                }
+            }
+            finally
+            {
+                SharedStrings.Dispose();
+
+                if (!Completed)
+                {
+                    Discard(destination, start);
+                }
+            }
+        }
+
+        private static void DisposeAfterFailure(IDisposable? resource)
+        {
+            try
+            {
+                resource?.Dispose();
+            }
+            catch (IOException)
+            {
+            }
+            catch (NotSupportedException)
+            {
+            }
+        }
+    }
+
+    private sealed class SheetSave(Worksheet sheet, string name, XDocument document,
+        List<(Table Table, int Id)> tables, List<(string Id, string Type, string Target, bool External)> relationships)
+    {
+        public Worksheet Sheet { get; } = sheet;
+        public string Name { get; } = name;
+        public XDocument Document { get; } = document;
+        public List<(Table Table, int Id)> Tables { get; } = tables;
+        public List<(string Id, string Type, string Target, bool External)> Relationships { get; } = relationships;
+        public Stream? Entry { get; set; }
+        public XmlWriter? Writer { get; set; }
+        public int Frame { get; set; }
+        public int Last { get; set; }
+    }
+
+    private static void Discard(Stream destination, long start)
+    {
+        if (start < 0)
+        {
+            return;
+        }
+
+        try
+        {
+            destination.SetLength(start);
+            destination.Position = start;
+        }
+        catch (IOException)
+        {
+        }
+        catch (NotSupportedException)
+        {
+        }
+    }
+
+    private static void SaveTable(ZipArchive archive, Table table, int tableId, RangeRef range)
+    {
+        XNamespace ns = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
+
+        var refStr = $"{range.Start}:{range.End}";
+
+        var tableElement = new XElement(ns + "table",
+            new XAttribute("id", tableId.ToString(CultureInfo.InvariantCulture)),
+            new XAttribute("name", table.Name),
+            new XAttribute("displayName", table.DisplayName),
+            new XAttribute("ref", refStr),
+            new XAttribute("totalsRowShown", table.ShowTotals ? "1" : "0"),
+            new XAttribute("totalsRowCount", table.ShowTotals ? "1" : "0"),
+            new XAttribute("headerRowCount", table.ShowHeaderRow ? "1" : "0"));
+
+        // <autoFilter> is present when the filter button is shown.
+        if (table.ShowFilterButton)
+        {
+            // AutoFilter range covers headers + data (excludes totals row).
+            var afEnd = table.ShowTotals
+                ? new CellRef(range.End.Row - 1, range.End.Column)
+                : range.End;
+            tableElement.Add(new XElement(ns + "autoFilter",
+                new XAttribute("ref", $"{range.Start}:{afEnd}")));
+        }
+
+        // <tableColumns count="N">
+        var tableColumnsElement = new XElement(ns + "tableColumns",
+            new XAttribute("count", table.Columns.Count.ToString(CultureInfo.InvariantCulture)));
+
+        for (var i = 0; i < table.Columns.Count; i++)
+        {
+            var col = table.Columns[i];
+            var columnElement = new XElement(ns + "tableColumn",
+                new XAttribute("id", (i + 1).ToString(CultureInfo.InvariantCulture)),
+                new XAttribute("name", col.Name));
+
+            if (table.ShowTotals && col.TotalsCalculation != TotalsCalculation.None)
+            {
+                columnElement.Add(new XAttribute("totalsRowFunction",
+                    TotalsCalculationToXml(col.TotalsCalculation)));
+            }
+
+            if (col.Formula is not null)
+            {
+                columnElement.Add(new XElement(ns + "calculatedColumnFormula", col.Formula));
+            }
+
+            tableColumnsElement.Add(columnElement);
+        }
+        tableElement.Add(tableColumnsElement);
+
+        // <tableStyleInfo>
+        if (table.TableStyle is not null
+            || table.ShowBandedRows || table.ShowBandedColumns
+            || table.HighlightFirstColumn || table.HighlightLastColumn)
+        {
+            var tableStyleInfoElement = new XElement(ns + "tableStyleInfo");
+            if (table.TableStyle is not null)
+            {
+                tableStyleInfoElement.Add(new XAttribute("name", table.TableStyle));
+            }
+
+            tableStyleInfoElement.Add(new XAttribute("showFirstColumn", table.HighlightFirstColumn ? "1" : "0"));
+            tableStyleInfoElement.Add(new XAttribute("showLastColumn", table.HighlightLastColumn ? "1" : "0"));
+            tableStyleInfoElement.Add(new XAttribute("showRowStripes", table.ShowBandedRows ? "1" : "0"));
+            tableStyleInfoElement.Add(new XAttribute("showColumnStripes", table.ShowBandedColumns ? "1" : "0"));
+            tableElement.Add(tableStyleInfoElement);
+        }
+
+        var doc = new XDocument(new XDeclaration("1.0", "UTF-8", "yes"), tableElement);
+        using var entry = archive.CreateEntry($"xl/tables/table{tableId}.xml").Open();
+        doc.Save(entry);
+    }
+
+    private static string TotalsCalculationToXml(TotalsCalculation calc) => calc switch
+    {
+        TotalsCalculation.None => "none",
+        TotalsCalculation.Sum => "sum",
+        TotalsCalculation.Average => "average",
+        TotalsCalculation.Count => "countNums",   // Excel reverses these — see ECMA-376
+        TotalsCalculation.CountNumbers => "count",
+        TotalsCalculation.Min => "min",
+        TotalsCalculation.Max => "max",
+        TotalsCalculation.StdDev => "stdDev",
+        TotalsCalculation.Var => "var",
+        TotalsCalculation.Custom => "custom",
+        _ => "none",
+    };
+
+    internal static TotalsCalculation TotalsCalculationFromXml(string? value) => value switch
+    {
+        "sum" => TotalsCalculation.Sum,
+        "average" => TotalsCalculation.Average,
+        "countNums" => TotalsCalculation.Count,
+        "count" => TotalsCalculation.CountNumbers,
+        "min" => TotalsCalculation.Min,
+        "max" => TotalsCalculation.Max,
+        "stdDev" => TotalsCalculation.StdDev,
+        "var" => TotalsCalculation.Var,
+        "custom" => TotalsCalculation.Custom,
+        _ => TotalsCalculation.None,
+    };
+
+    private static void SaveTheme(ZipArchive archive)
+    {
+        var assembly = typeof(XlsxWriter).Assembly;
+        using var resource = assembly.GetManifestResourceStream("Radzen.Blazor.Documents.Spreadsheet.theme1.xml")
+            ?? throw new InvalidOperationException("Embedded theme1.xml resource not found.");
+        using var entry = archive.CreateEntry("xl/theme/theme1.xml").Open();
+        resource.CopyTo(entry);
+    }
+
+    private static void SaveDocPropsCore(ZipArchive archive)
+    {
+        XNamespace cp = "http://schemas.openxmlformats.org/package/2006/metadata/core-properties";
+        XNamespace dc = "http://purl.org/dc/elements/1.1/";
+        XNamespace dcterms = "http://purl.org/dc/terms/";
+        XNamespace xsi = "http://www.w3.org/2001/XMLSchema-instance";
+
+        var nowIso = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ", CultureInfo.InvariantCulture);
+
+        var doc = new XDocument(
+            new XDeclaration("1.0", "UTF-8", "yes"),
+            new XElement(cp + "coreProperties",
+                new XAttribute(XNamespace.Xmlns + "cp", cp.NamespaceName),
+                new XAttribute(XNamespace.Xmlns + "dc", dc.NamespaceName),
+                new XAttribute(XNamespace.Xmlns + "dcterms", dcterms.NamespaceName),
+                new XAttribute(XNamespace.Xmlns + "xsi", xsi.NamespaceName),
+                new XElement(dcterms + "created",
+                    new XAttribute(xsi + "type", "dcterms:W3CDTF"), nowIso),
+                new XElement(dcterms + "modified",
+                    new XAttribute(xsi + "type", "dcterms:W3CDTF"), nowIso)));
+
+        using var entry = archive.CreateEntry("docProps/core.xml").Open();
+        doc.Save(entry);
+    }
+
+    private void SaveDocPropsApp(ZipArchive archive)
+    {
+        XNamespace ep = "http://schemas.openxmlformats.org/officeDocument/2006/extended-properties";
+        XNamespace vt = "http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes";
+
+        var titlesOfParts = new XElement(ep + "TitlesOfParts",
+            new XElement(vt + "vector",
+                new XAttribute("size", sheets.Count.ToString(CultureInfo.InvariantCulture)),
+                new XAttribute("baseType", "lpstr"),
+                sheets.Select(s => new XElement(vt + "lpstr", s.Name))));
+
+        var headingPairs = new XElement(ep + "HeadingPairs",
+            new XElement(vt + "vector",
+                new XAttribute("size", "2"),
+                new XAttribute("baseType", "variant"),
+                new XElement(vt + "variant", new XElement(vt + "lpstr", "Worksheets")),
+                new XElement(vt + "variant", new XElement(vt + "i4",
+                    sheets.Count.ToString(CultureInfo.InvariantCulture)))));
+
+        var doc = new XDocument(
+            new XDeclaration("1.0", "UTF-8", "yes"),
+            new XElement(ep + "Properties",
+                new XAttribute("xmlns", ep.NamespaceName),
+                new XAttribute(XNamespace.Xmlns + "vt", vt.NamespaceName),
+                new XElement(ep + "Application", "Radzen.Blazor"),
+                headingPairs,
+                titlesOfParts));
+
+        using var entry = archive.CreateEntry("docProps/app.xml").Open();
+        doc.Save(entry);
+    }
+
+    private record struct FontKey(string? Color, bool Bold, bool Italic, bool Underline, bool Strikethrough, string? FontFamily, double? FontSize);
+    private record struct CellStyleKey(int FontId, int FillId, int BorderId, TextAlign? TextAlign, VerticalAlign? VerticalAlign, bool WrapText, int NumFmtId, bool? Locked, bool? FormulaHidden, bool QuotePrefix);
+    private record struct BorderKey(string? TopStyle, string? TopColor, string? RightStyle, string? RightColor, string? BottomStyle, string? BottomColor, string? LeftStyle, string? LeftColor);
+
+    private class StyleTracker
+    {
+        public Dictionary<FontKey, int> FontStyles { get; } = new();
+        public Dictionary<string, int> FillStyles { get; } = new();
+        public Dictionary<CellStyleKey, int> CellStyles { get; } = new();
+        public Dictionary<string, int> NumberFormats { get; } = new(StringComparer.OrdinalIgnoreCase);
+        public Dictionary<BorderKey, int> BorderStyles { get; } = new();
+        public XDocument StylesDocument { get; set; } = null!;
+        public XElement FontsElement { get; set; } = null!;
+        public XElement FillsElement { get; set; } = null!;
+        public XElement CellXfsElement { get; set; } = null!;
+        public XElement BordersElement { get; set; } = null!;
+        public XElement DxfsElement { get; set; } = null!;
+        public XElement? NumFmtsElement { get; set; }
+    }
+
+    private void SaveDrawing(ZipArchive archive, Worksheet sheet, int drawingIndex)
+    {
+        XNamespace xdr = "http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing";
+        XNamespace a = "http://schemas.openxmlformats.org/drawingml/2006/main";
+        XNamespace r = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+
+        var drawingDoc = new XDocument(
+            new XElement(xdr + "wsDr",
+                new XAttribute(XNamespace.Xmlns + "xdr", xdr.NamespaceName),
+                new XAttribute(XNamespace.Xmlns + "a", a.NamespaceName),
+                new XAttribute(XNamespace.Xmlns + "r", r.NamespaceName)));
+
+        var drawingRels = new List<(string Id, string Target, string Type)>();
+        var relIndex = 1;
+
+        foreach (var image in sheet.Images)
+        {
+            var imageRelId = $"rId{relIndex++}";
+
+            var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(image.Data));
+            if (!mediaMap.TryGetValue(hash, out var mediaPath))
+            {
+                var ext = ContentTypeToExtension(image.ContentType);
+                mediaPath = $"xl/media/image{mediaIndex++}.{ext}";
+                mediaMap[hash] = mediaPath;
+
+                using (var mediaEntry = archive.CreateEntry(mediaPath).Open())
+                {
+                    mediaEntry.Write(image.Data, 0, image.Data.Length);
+                }
+            }
+
+            // Relative path from xl/drawings/ to xl/media/
+            var relTarget = "../media/" + mediaPath.Split('/').Last();
+            drawingRels.Add((imageRelId, relTarget, "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image"));
+
+            XElement anchorElement;
+            var fromElement = new XElement(xdr + "from",
+                new XElement(xdr + "col", image.From.Column.ToString(CultureInfo.InvariantCulture)),
+                new XElement(xdr + "colOff", PixelsToEmu(image.From.ColumnOffset)),
+                new XElement(xdr + "row", image.From.Row.ToString(CultureInfo.InvariantCulture)),
+                new XElement(xdr + "rowOff", PixelsToEmu(image.From.RowOffset)));
+
+            var cNvPr = new XElement(xdr + "cNvPr",
+                new XAttribute("id", relIndex.ToString(CultureInfo.InvariantCulture)),
+                new XAttribute("name", image.Name ?? $"Image {relIndex - 1}"));
+
+            if (image.Description is not null)
+            {
+                cNvPr.Add(new XAttribute("descr", image.Description));
+            }
+
+            var picElement = new XElement(xdr + "pic",
+                new XElement(xdr + "nvPicPr",
+                    cNvPr,
+                    new XElement(xdr + "cNvPicPr")),
+                new XElement(xdr + "blipFill",
+                    new XElement(a + "blip", new XAttribute(r + "embed", imageRelId)),
+                    new XElement(a + "stretch",
+                        new XElement(a + "fillRect"))),
+                new XElement(xdr + "spPr",
+                    new XElement(a + "prstGeom", new XAttribute("prst", "rect"),
+                        new XElement(a + "avLst"))));
+
+            if (image.AnchorMode == DrawingAnchorMode.TwoCellAnchor && image.To is not null)
+            {
+                var toElement = new XElement(xdr + "to",
+                    new XElement(xdr + "col", image.To.Column.ToString(CultureInfo.InvariantCulture)),
+                    new XElement(xdr + "colOff", PixelsToEmu(image.To.ColumnOffset)),
+                    new XElement(xdr + "row", image.To.Row.ToString(CultureInfo.InvariantCulture)),
+                    new XElement(xdr + "rowOff", PixelsToEmu(image.To.RowOffset)));
+
+                anchorElement = new XElement(xdr + "twoCellAnchor",
+                    fromElement,
+                    toElement,
+                    picElement,
+                    new XElement(xdr + "clientData"));
+            }
+            else
+            {
+                var extElement = new XElement(xdr + "ext",
+                    new XAttribute("cx", PixelsToEmu(image.Width)),
+                    new XAttribute("cy", PixelsToEmu(image.Height)));
+
+                anchorElement = new XElement(xdr + "oneCellAnchor",
+                    fromElement,
+                    extElement,
+                    picElement,
+                    new XElement(xdr + "clientData"));
+            }
+
+            drawingDoc.Root!.Add(anchorElement);
+        }
+
+        var chartIndex = 1;
+        foreach (var chart in sheet.Charts)
+        {
+            var chartRelId = $"rId{relIndex++}";
+            var chartFileName = $"chart{drawingIndex}_{chartIndex}.xml";
+            var chartPath = $"xl/charts/{chartFileName}";
+
+            drawingRels.Add((chartRelId, $"../charts/{chartFileName}", "http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart"));
+
+            var fromElement = new XElement(xdr + "from",
+                new XElement(xdr + "col", chart.From.Column.ToString(CultureInfo.InvariantCulture)),
+                new XElement(xdr + "colOff", PixelsToEmu(chart.From.ColumnOffset)),
+                new XElement(xdr + "row", chart.From.Row.ToString(CultureInfo.InvariantCulture)),
+                new XElement(xdr + "rowOff", PixelsToEmu(chart.From.RowOffset)));
+
+            XNamespace c = "http://schemas.openxmlformats.org/drawingml/2006/chart";
+
+            var graphicFrame = new XElement(xdr + "graphicFrame",
+                new XElement(xdr + "nvGraphicFramePr",
+                    new XElement(xdr + "cNvPr",
+                        new XAttribute("id", relIndex.ToString(CultureInfo.InvariantCulture)),
+                        new XAttribute("name", chart.Name ?? $"Chart {chartIndex}")),
+                    new XElement(xdr + "cNvGraphicFramePr")),
+                new XElement(xdr + "xfrm",
+                    new XElement(a + "off", new XAttribute("x", "0"), new XAttribute("y", "0")),
+                    new XElement(a + "ext", new XAttribute("cx", "0"), new XAttribute("cy", "0"))),
+                new XElement(a + "graphic",
+                    new XElement(a + "graphicData",
+                        new XAttribute("uri", "http://schemas.openxmlformats.org/drawingml/2006/chart"),
+                        new XElement(c + "chart",
+                            new XAttribute(XNamespace.Xmlns + "c", c.NamespaceName),
+                            new XAttribute(r + "id", chartRelId)))));
+
+            XElement chartAnchor;
+            if (chart.AnchorMode == DrawingAnchorMode.TwoCellAnchor && chart.To is not null)
+            {
+                var toElement = new XElement(xdr + "to",
+                    new XElement(xdr + "col", chart.To.Column.ToString(CultureInfo.InvariantCulture)),
+                    new XElement(xdr + "colOff", PixelsToEmu(chart.To.ColumnOffset)),
+                    new XElement(xdr + "row", chart.To.Row.ToString(CultureInfo.InvariantCulture)),
+                    new XElement(xdr + "rowOff", PixelsToEmu(chart.To.RowOffset)));
+
+                chartAnchor = new XElement(xdr + "twoCellAnchor",
+                    fromElement, toElement, graphicFrame,
+                    new XElement(xdr + "clientData"));
+            }
+            else
+            {
+                var extElement = new XElement(xdr + "ext",
+                    new XAttribute("cx", PixelsToEmu(chart.Width)),
+                    new XAttribute("cy", PixelsToEmu(chart.Height)));
+
+                chartAnchor = new XElement(xdr + "oneCellAnchor",
+                    fromElement, extElement, graphicFrame,
+                    new XElement(xdr + "clientData"));
+            }
+
+            drawingDoc.Root!.Add(chartAnchor);
+
+            SaveChartXml(archive, chart, chartPath);
+
+            chartIndex++;
+        }
+
+        using (var entry = archive.CreateEntry($"xl/drawings/drawing{drawingIndex}.xml").Open())
+        {
+            drawingDoc.Save(entry);
+        }
+
+        if (drawingRels.Count > 0)
+        {
+            var pkgNs = "http://schemas.openxmlformats.org/package/2006/relationships";
+            var drawingRelsDoc = new XDocument(
+                new XElement(XName.Get("Relationships", pkgNs)));
+
+            foreach (var (id, target, type) in drawingRels)
+            {
+                drawingRelsDoc.Root!.Add(new XElement(XName.Get("Relationship", pkgNs),
+                    new XAttribute("Id", id),
+                    new XAttribute("Type", type),
+                    new XAttribute("Target", target)));
+            }
+
+            using (var relsEntry = archive.CreateEntry($"xl/drawings/_rels/drawing{drawingIndex}.xml.rels").Open())
+            {
+                drawingRelsDoc.Save(relsEntry);
+            }
+        }
+    }
+
+    private static void SaveChartXml(ZipArchive archive, SheetChart chart, string chartPath)
+    {
+        XDocument chartDoc;
+
+        // If we have the original raw XML, write it back for lossless round-trip
+        if (!string.IsNullOrEmpty(chart.RawChartXml))
+        {
+            chartDoc = XDocument.Parse(chart.RawChartXml);
+        }
+        else
+        {
+            chartDoc = GenerateChartXml(chart);
+        }
+
+        using var entry = archive.CreateEntry(chartPath).Open();
+        chartDoc.Save(entry);
+    }
+
+    private static XDocument GenerateChartXml(SheetChart chart)
+    {
+        XNamespace c = "http://schemas.openxmlformats.org/drawingml/2006/chart";
+        XNamespace a = "http://schemas.openxmlformats.org/drawingml/2006/main";
+        XNamespace r = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+
+        var plotArea = new XElement(c + "plotArea",
+            new XElement(c + "layout"));
+
+        var groupElement = CreateChartGroupElement(chart, c);
+        if (groupElement is not null)
+        {
+            plotArea.Add(groupElement);
+        }
+
+        if (chart.ChartType != SpreadsheetChartType.Pie && chart.ChartType != SpreadsheetChartType.Donut)
+        {
+            plotArea.Add(new XElement(c + "catAx",
+                new XElement(c + "axId", new XAttribute("val", "1")),
+                new XElement(c + "scaling", new XElement(c + "orientation", new XAttribute("val", "minMax"))),
+                new XElement(c + "delete", new XAttribute("val", "0")),
+                new XElement(c + "axPos", new XAttribute("val", "b")),
+                new XElement(c + "crossAx", new XAttribute("val", "2"))));
+
+            plotArea.Add(new XElement(c + "valAx",
+                new XElement(c + "axId", new XAttribute("val", "2")),
+                new XElement(c + "scaling", new XElement(c + "orientation", new XAttribute("val", "minMax"))),
+                new XElement(c + "delete", new XAttribute("val", "0")),
+                new XElement(c + "axPos", new XAttribute("val", "l")),
+                new XElement(c + "crossAx", new XAttribute("val", "1"))));
+        }
+
+        var chartElement = new XElement(c + "chart");
+
+        if (!string.IsNullOrEmpty(chart.Title))
+        {
+            chartElement.Add(new XElement(c + "title",
+                new XElement(c + "tx",
+                    new XElement(c + "rich",
+                        new XElement(a + "bodyPr"),
+                        new XElement(a + "lstStyle"),
+                        new XElement(a + "p",
+                            new XElement(a + "r",
+                                new XElement(a + "t", chart.Title)))))));
+        }
+
+        chartElement.Add(new XElement(c + "autoTitleDeleted", new XAttribute("val", string.IsNullOrEmpty(chart.Title) ? "1" : "0")));
+        chartElement.Add(plotArea);
+
+        if (chart.ShowLegend)
+        {
+            var legendPos = chart.LegendPosition switch
+            {
+                ChartLegendPosition.Top => "t",
+                ChartLegendPosition.Bottom => "b",
+                ChartLegendPosition.Left => "l",
+                ChartLegendPosition.Right => "r",
+                _ => "r"
+            };
+
+            chartElement.Add(new XElement(c + "legend",
+                new XElement(c + "legendPos", new XAttribute("val", legendPos))));
+        }
+
+        chartElement.Add(new XElement(c + "plotVisOnly", new XAttribute("val", "1")));
+
+        return new XDocument(
+            new XElement(c + "chartSpace",
+                new XAttribute(XNamespace.Xmlns + "c", c.NamespaceName),
+                new XAttribute(XNamespace.Xmlns + "a", a.NamespaceName),
+                new XAttribute(XNamespace.Xmlns + "r", r.NamespaceName),
+                chartElement));
+    }
+
+    private static XElement? CreateChartGroupElement(SheetChart chart, XNamespace c)
+    {
+        var (elementName, barDir, grouping) = chart.ChartType switch
+        {
+            SpreadsheetChartType.Column => ("barChart", "col", "clustered"),
+            SpreadsheetChartType.Bar => ("barChart", "bar", "clustered"),
+            SpreadsheetChartType.StackedColumn => ("barChart", "col", "stacked"),
+            SpreadsheetChartType.StackedBar => ("barChart", "bar", "stacked"),
+            SpreadsheetChartType.FullStackedColumn => ("barChart", "col", "percentStacked"),
+            SpreadsheetChartType.FullStackedBar => ("barChart", "bar", "percentStacked"),
+            SpreadsheetChartType.Line => ("lineChart", (string?)null, "standard"),
+            SpreadsheetChartType.Area => ("areaChart", null, "standard"),
+            SpreadsheetChartType.StackedArea => ("areaChart", null, "stacked"),
+            SpreadsheetChartType.FullStackedArea => ("areaChart", null, "percentStacked"),
+            SpreadsheetChartType.Pie => ("pieChart", null, null),
+            SpreadsheetChartType.Donut => ("doughnutChart", null, null),
+            SpreadsheetChartType.Scatter => ("scatterChart", null, null),
+            _ => (null, null, null)
+        };
+
+        if (elementName is null)
+        {
+            return null;
+        }
+
+        var group = new XElement(c + elementName);
+
+        if (barDir is not null)
+        {
+            group.Add(new XElement(c + "barDir", new XAttribute("val", barDir)));
+        }
+
+        if (grouping is not null)
+        {
+            group.Add(new XElement(c + "grouping", new XAttribute("val", grouping)));
+        }
+
+        foreach (var series in chart.Series)
+        {
+            var ser = new XElement(c + "ser",
+                new XElement(c + "idx", new XAttribute("val", series.Index.ToString(CultureInfo.InvariantCulture))),
+                new XElement(c + "order", new XAttribute("val", series.Index.ToString(CultureInfo.InvariantCulture))));
+
+            if (!string.IsNullOrEmpty(series.Name))
+            {
+                ser.Add(new XElement(c + "tx",
+                    new XElement(c + "strRef",
+                        new XElement(c + "strCache",
+                            new XElement(c + "ptCount", new XAttribute("val", "1")),
+                            new XElement(c + "pt", new XAttribute("idx", "0"),
+                                new XElement(c + "v", series.Name))))));
+            }
+
+            if (!string.IsNullOrEmpty(series.Categories))
+            {
+                var catRef = new XElement(c + "strRef",
+                    new XElement(c + "f", series.Categories));
+
+                if (series.CategoryCache.Count > 0)
+                {
+                    var cache = new XElement(c + "strCache",
+                        new XElement(c + "ptCount", new XAttribute("val", series.CategoryCache.Count.ToString(CultureInfo.InvariantCulture))));
+
+                    for (var i = 0; i < series.CategoryCache.Count; i++)
+                    {
+                        cache.Add(new XElement(c + "pt", new XAttribute("idx", i.ToString(CultureInfo.InvariantCulture)),
+                            new XElement(c + "v", series.CategoryCache[i])));
+                    }
+
+                    catRef.Add(cache);
+                }
+
+                ser.Add(new XElement(c + "cat", catRef));
+            }
+
+            if (!string.IsNullOrEmpty(series.Values))
+            {
+                var numRef = new XElement(c + "numRef",
+                    new XElement(c + "f", series.Values));
+
+                if (series.ValueCache.Count > 0)
+                {
+                    var cache = new XElement(c + "numCache",
+                        new XElement(c + "formatCode", "General"),
+                        new XElement(c + "ptCount", new XAttribute("val", series.ValueCache.Count.ToString(CultureInfo.InvariantCulture))));
+
+                    for (var i = 0; i < series.ValueCache.Count; i++)
+                    {
+                        var v = series.ValueCache[i];
+                        if (v.HasValue)
+                        {
+                            cache.Add(new XElement(c + "pt", new XAttribute("idx", i.ToString(CultureInfo.InvariantCulture)),
+                                new XElement(c + "v", v.Value.ToString(CultureInfo.InvariantCulture))));
+                        }
+                    }
+
+                    numRef.Add(cache);
+                }
+
+                ser.Add(new XElement(c + "val", numRef));
+            }
+
+            group.Add(ser);
+        }
+
+        if (chart.ChartType != SpreadsheetChartType.Pie && chart.ChartType != SpreadsheetChartType.Donut)
+        {
+            group.Add(new XElement(c + "axId", new XAttribute("val", "1")));
+            group.Add(new XElement(c + "axId", new XAttribute("val", "2")));
+        }
+
+        return group;
+    }
+
+    private void SaveContentTypes(ZipArchive archive, bool includeSharedStrings, int tableCount = 0)
+    {
+        var ctNs = "http://schemas.openxmlformats.org/package/2006/content-types";
+        var contentTypes = new XDocument(
+            new XElement(XName.Get("Types", ctNs),
+                new XElement(XName.Get("Default", ctNs),
+                    new XAttribute("Extension", "rels"),
+                    new XAttribute("ContentType", "application/vnd.openxmlformats-package.relationships+xml")),
+                new XElement(XName.Get("Default", ctNs),
+                    new XAttribute("Extension", "xml"),
+                    new XAttribute("ContentType", "application/xml")),
+                new XElement(XName.Get("Override", ctNs),
+                    new XAttribute("PartName", "/xl/workbook.xml"),
+                    new XAttribute("ContentType", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml")),
+                new XElement(XName.Get("Override", ctNs),
+                    new XAttribute("PartName", "/xl/theme/theme1.xml"),
+                    new XAttribute("ContentType", "application/vnd.openxmlformats-officedocument.theme+xml")),
+                new XElement(XName.Get("Override", ctNs),
+                    new XAttribute("PartName", "/xl/styles.xml"),
+                    new XAttribute("ContentType", "application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml")),
+                new XElement(XName.Get("Override", ctNs),
+                    new XAttribute("PartName", "/docProps/core.xml"),
+                    new XAttribute("ContentType", "application/vnd.openxmlformats-package.core-properties+xml")),
+                new XElement(XName.Get("Override", ctNs),
+                    new XAttribute("PartName", "/docProps/app.xml"),
+                    new XAttribute("ContentType", "application/vnd.openxmlformats-officedocument.extended-properties+xml"))));
+
+        if (includeSharedStrings)
+        {
+            contentTypes.Root!.Add(new XElement(XName.Get("Override", ctNs),
+                new XAttribute("PartName", "/xl/sharedStrings.xml"),
+                new XAttribute("ContentType", "application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml")));
+        }
+
+        for (var i = 0; i < sheets.Count; i++)
+        {
+            contentTypes.Root!.Add(new XElement(XName.Get("Override", ctNs),
+                new XAttribute("PartName", $"/xl/worksheets/sheet{i + 1}.xml"),
+                new XAttribute("ContentType", "application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml")));
+        }
+
+        for (var i = 1; i <= tableCount; i++)
+        {
+            contentTypes.Root!.Add(new XElement(XName.Get("Override", ctNs),
+                new XAttribute("PartName", $"/xl/tables/table{i}.xml"),
+                new XAttribute("ContentType", "application/vnd.openxmlformats-officedocument.spreadsheetml.table+xml")));
+        }
+
+        var imageExtensions = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var sheet in sheets)
+        {
+            foreach (var image in sheet.Images)
+            {
+                var ext = ContentTypeToExtension(image.ContentType);
+                imageExtensions.Add(ext);
+            }
+        }
+
+        foreach (var ext in imageExtensions)
+        {
+            contentTypes.Root!.Add(new XElement(XName.Get("Default", ctNs),
+                new XAttribute("Extension", ext),
+                new XAttribute("ContentType", ExtensionToContentType(ext))));
+        }
+
+        for (var i = 0; i < sheets.Count; i++)
+        {
+            if (sheets[i].Images.Count > 0 || sheets[i].Charts.Count > 0)
+            {
+                contentTypes.Root!.Add(new XElement(XName.Get("Override", ctNs),
+                    new XAttribute("PartName", $"/xl/drawings/drawing{i + 1}.xml"),
+                    new XAttribute("ContentType", "application/vnd.openxmlformats-officedocument.drawing+xml")));
+
+                for (var j = 0; j < sheets[i].Charts.Count; j++)
+                {
+                    contentTypes.Root!.Add(new XElement(XName.Get("Override", ctNs),
+                        new XAttribute("PartName", $"/xl/charts/chart{i + 1}_{j + 1}.xml"),
+                        new XAttribute("ContentType", "application/vnd.openxmlformats-officedocument.drawingml.chart+xml")));
+                }
+            }
+        }
+
+        using var entry = archive.CreateEntry("[Content_Types].xml").Open();
+        contentTypes.Save(entry);
+    }
+
+    private static string ContentTypeToExtension(string contentType)
+    {
+        return contentType switch
+        {
+            "image/png" => "png",
+            "image/jpeg" => "jpeg",
+            "image/gif" => "gif",
+            "image/bmp" => "bmp",
+            "image/svg+xml" => "svg",
+            "image/webp" => "webp",
+            "image/tiff" => "tiff",
+            _ => "png"
+        };
+    }
+
+    private static string ExtensionToContentType(string extension)
+    {
+        return extension switch
+        {
+            "png" => "image/png",
+            "jpeg" or "jpg" => "image/jpeg",
+            "gif" => "image/gif",
+            "bmp" => "image/bmp",
+            "svg" => "image/svg+xml",
+            "webp" => "image/webp",
+            "tiff" or "tif" => "image/tiff",
+            _ => "image/png"
+        };
+    }
+
+    private static void SaveRelationships(ZipArchive archive)
+    {
+        var ns = "http://schemas.openxmlformats.org/package/2006/relationships";
+        var rels = new XDocument(
+            new XElement(XName.Get("Relationships", ns),
+                new XElement(XName.Get("Relationship", ns),
+                    new XAttribute("Id", "rId1"),
+                    new XAttribute("Type", "http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument"),
+                    new XAttribute("Target", "xl/workbook.xml")),
+                new XElement(XName.Get("Relationship", ns),
+                    new XAttribute("Id", "rId2"),
+                    new XAttribute("Type", "http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties"),
+                    new XAttribute("Target", "docProps/core.xml")),
+                new XElement(XName.Get("Relationship", ns),
+                    new XAttribute("Id", "rId3"),
+                    new XAttribute("Type", "http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties"),
+                    new XAttribute("Target", "docProps/app.xml"))));
+
+        using var entry = archive.CreateEntry("_rels/.rels").Open();
+        rels.Save(entry);
+    }
+
+    private static void SaveStyles(ZipArchive archive, StyleTracker styleTracker)
+    {
+        using var entry = archive.CreateEntry("xl/styles.xml").Open();
+        styleTracker.StylesDocument.Save(entry);
+    }
+
+    private static StyleTracker CreateStylesDocument()
+    {
+        var styleTracker = new StyleTracker();
+        XNamespace ns = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
+
+        var stylesDoc = new XDocument(
+            new XElement(ns + "styleSheet",
+                CreateFontsElement(),
+                CreateFillsElement(),
+                CreateBordersElement(),
+                CreateCellStyleXfsElement(),
+                CreateCellXfsElement(),
+                CreateCellStylesElement(),
+                new XElement(ns + "dxfs", new XAttribute("count", "0")),
+                new XElement(ns + "tableStyles",
+                    new XAttribute("count", "0"),
+                    new XAttribute("defaultTableStyle", "TableStyleMedium2"),
+                    new XAttribute("defaultPivotStyle", "PivotStyleLight16"))));
+
+        styleTracker.StylesDocument = stylesDoc;
+        styleTracker.FontsElement = stylesDoc.Root!.Element(ns + "fonts")!;
+        styleTracker.FillsElement = stylesDoc.Root!.Element(ns + "fills")!;
+        styleTracker.CellXfsElement = stylesDoc.Root!.Element(ns + "cellXfs")!;
+        styleTracker.BordersElement = stylesDoc.Root!.Element(ns + "borders")!;
+        styleTracker.DxfsElement = stylesDoc.Root!.Element(ns + "dxfs")!;
+
+        return styleTracker;
+    }
+
+    private static XElement CreateFontsElement()
+    {
+        XNamespace ns = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
+        return new XElement(ns + "fonts",
+            new XAttribute("count", "1"),
+            new XElement(ns + "font",
+                new XElement(ns + "sz", new XAttribute("val", "11")),
+                new XElement(ns + "color", new XAttribute("theme", "1")),
+                new XElement(ns + "name", new XAttribute("val", "Aptos Narrow")),
+                new XElement(ns + "family", new XAttribute("val", "2")),
+                new XElement(ns + "scheme", new XAttribute("val", "minor"))));
+    }
+
+    private static XElement CreateFillsElement()
+    {
+        return new XElement(XName.Get("fills", "http://schemas.openxmlformats.org/spreadsheetml/2006/main"),
+            new XAttribute("count", "2"),
+            new XElement(XName.Get("fill", "http://schemas.openxmlformats.org/spreadsheetml/2006/main"),
+                new XElement(XName.Get("patternFill", "http://schemas.openxmlformats.org/spreadsheetml/2006/main"),
+                    new XAttribute("patternType", "none"))),
+            new XElement(XName.Get("fill", "http://schemas.openxmlformats.org/spreadsheetml/2006/main"),
+                new XElement(XName.Get("patternFill", "http://schemas.openxmlformats.org/spreadsheetml/2006/main"),
+                    new XAttribute("patternType", "gray125"))));
+    }
+
+    private static XElement CreateBordersElement()
+    {
+        return new XElement(XName.Get("borders", "http://schemas.openxmlformats.org/spreadsheetml/2006/main"),
+            new XAttribute("count", "1"),
+            new XElement(XName.Get("border", "http://schemas.openxmlformats.org/spreadsheetml/2006/main"),
+                new XElement(XName.Get("left", "http://schemas.openxmlformats.org/spreadsheetml/2006/main")),
+                new XElement(XName.Get("right", "http://schemas.openxmlformats.org/spreadsheetml/2006/main")),
+                new XElement(XName.Get("top", "http://schemas.openxmlformats.org/spreadsheetml/2006/main")),
+                new XElement(XName.Get("bottom", "http://schemas.openxmlformats.org/spreadsheetml/2006/main")),
+                new XElement(XName.Get("diagonal", "http://schemas.openxmlformats.org/spreadsheetml/2006/main"))));
+    }
+
+    private static XElement CreateCellStyleXfsElement()
+    {
+        return new XElement(XName.Get("cellStyleXfs", "http://schemas.openxmlformats.org/spreadsheetml/2006/main"),
+            new XAttribute("count", "1"),
+            new XElement(XName.Get("xf", "http://schemas.openxmlformats.org/spreadsheetml/2006/main"),
+                new XAttribute("numFmtId", "0"),
+                new XAttribute("fontId", "0"),
+                new XAttribute("fillId", "0"),
+                new XAttribute("borderId", "0")));
+    }
+
+    private static XElement CreateCellXfsElement()
+    {
+        return new XElement(XName.Get("cellXfs", "http://schemas.openxmlformats.org/spreadsheetml/2006/main"),
+            new XAttribute("count", "1"),
+            new XElement(XName.Get("xf", "http://schemas.openxmlformats.org/spreadsheetml/2006/main"),
+                new XAttribute("numFmtId", "0"),
+                new XAttribute("fontId", "0"),
+                new XAttribute("fillId", "0"),
+                new XAttribute("borderId", "0"),
+                new XAttribute("xfId", "0")));
+    }
+
+    private static XElement CreateCellStylesElement()
+    {
+        return new XElement(XName.Get("cellStyles", "http://schemas.openxmlformats.org/spreadsheetml/2006/main"),
+            new XAttribute("count", "1"),
+            new XElement(XName.Get("cellStyle", "http://schemas.openxmlformats.org/spreadsheetml/2006/main"),
+                new XAttribute("name", "Normal"),
+                new XAttribute("xfId", "0"),
+                new XAttribute("builtinId", "0")));
+    }
+
+    private void SaveWorkbookRelationships(ZipArchive archive, SharedStringTable sharedStrings)
+    {
+        var workbookRels = CreateWorkbookRelationships();
+        var workbookRelsElement = workbookRels.Root!;
+        var pkgNs = "http://schemas.openxmlformats.org/package/2006/relationships";
+
+        // Styles is always present.
+        workbookRelsElement.Add(new XElement(XName.Get("Relationship", pkgNs),
+            new XAttribute("Id", "rId2"),
+            new XAttribute("Type", "http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles"),
+            new XAttribute("Target", "styles.xml")));
+
+        for (var i = 0; i < sheets.Count; i++)
+        {
+            var sheetId = i + 1;
+            var sheetName = $"sheet{sheetId}.xml";
+            var relId = $"rId{sheetId + 2}";
+
+            workbookRelsElement.Add(new XElement(XName.Get("Relationship", pkgNs),
+                new XAttribute("Id", relId),
+                new XAttribute("Type", "http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet"),
+                new XAttribute("Target", $"worksheets/{sheetName}")));
+
+        }
+
+        workbookRelsElement.Add(new XElement(XName.Get("Relationship", pkgNs),
+            new XAttribute("Id", $"rId{sheets.Count + 3}"),
+            new XAttribute("Type", "http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme"),
+            new XAttribute("Target", "theme/theme1.xml")));
+
+        // sharedStrings only when something was written into it.
+        if (sharedStrings.Count > 0)
+        {
+            workbookRelsElement.Add(new XElement(XName.Get("Relationship", pkgNs),
+                new XAttribute("Id", "rId1"),
+                new XAttribute("Type", "http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings"),
+                new XAttribute("Target", "sharedStrings.xml")));
+        }
+
+        using var relsEntry = archive.CreateEntry("xl/_rels/workbook.xml.rels").Open();
+        workbookRels.Save(relsEntry);
+    }
+
+    private static XDocument CreateWorkbookRelationships()
+    {
+        return new XDocument(
+            new XElement(XName.Get("Relationships", "http://schemas.openxmlformats.org/package/2006/relationships")));
+    }
+
+    private void BeginSheet(SaveSession session, int index, bool streaming)
+    {
+        var archive = session.Archive;
+        var styleTracker = session.Styles;
+        var sheet = sheets[index];
+        var sheetId = index + 1;
+        var sheetName = $"sheet{sheetId}.xml";
+        var relId = $"rId{sheetId + 2}";
+        var sheetDoc = CreateSheetDocument(sheet, sheetId, relId);
+
+        if (streaming)
+        {
+            sheetDoc.Root!.Element(XName.Get("dimension", Main))?.Remove();
+        }
+
+        AddMergedCells(sheet, sheetDoc);
+
+        AddAutoFilter(sheet, sheetDoc);
+
+        AddConditionalFormatting(sheet, sheetDoc, styleTracker);
+
+        AddDataValidations(sheet, sheetDoc);
+
+        AddSheetProtection(sheet, sheetDoc);
+
+        var hyperlinkRels = AddHyperlinks(sheet, sheetDoc);
+
+        var sheetRelEntries = new List<(string Id, string Type, string Target, bool External)>();
+        foreach (var (id, url) in hyperlinkRels)
+        {
+            sheetRelEntries.Add((id, "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink", url, true));
+        }
+
+        if (sheet.Images.Count > 0 || sheet.Charts.Count > 0)
+        {
+            var drawingRelId = $"rId{hyperlinkRels.Count + 1}";
+            var drawingIndex = sheetId;
+            var ns = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
+            XNamespace rNs = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+            sheetDoc.Root!.Add(new XElement(XName.Get("drawing", ns),
+                new XAttribute(rNs + "id", drawingRelId)));
+
+            sheetRelEntries.Add((drawingRelId, "http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing", $"../drawings/drawing{drawingIndex}.xml", false));
+
+            SaveDrawing(archive, sheet, drawingIndex);
+        }
+
+        // pageMargins is appended last; ECMA-376 puts it before drawing,
+        // but Excel and downstream readers tolerate trailing position too.
+        sheetDoc.Root!.Add(CreatePageMargins());
+
+        var tableParts = new List<(Table Table, int Id)>();
+
+        if (sheet.Tables.Count > 0)
+        {
+            var ns = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
+            XNamespace rNs = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+
+            var tablePartsElement = new XElement(XName.Get("tableParts", ns),
+                new XAttribute("count", sheet.Tables.Count.ToString(CultureInfo.InvariantCulture)));
+
+            var nextRelIndex = sheetRelEntries.Count + 1;
+            foreach (var table in sheet.Tables)
+            {
+                tableIndex++;
+                var tableId = tableIndex;
+                var tableRelId = $"rId{nextRelIndex++}";
+
+                tablePartsElement.Add(new XElement(XName.Get("tablePart", ns),
+                    new XAttribute(rNs + "id", tableRelId)));
+
+                sheetRelEntries.Add((tableRelId,
+                    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/table",
+                    $"../tables/table{tableId}.xml",
+                    false));
+
+                tableParts.Add((table, tableId));
+            }
+
+            sheetDoc.Root!.Add(tablePartsElement);
+        }
+
+        var saved = new SheetSave(sheet, sheetName, sheetDoc, tableParts, sheetRelEntries);
+        session.Sheet = saved;
+        saved.Entry = archive.CreateEntry($"xl/worksheets/{sheetName}").Open();
+        saved.Writer = XmlWriter.Create(saved.Entry, PartXmlSettings);
+        WriteSheetStart(saved, styleTracker, session.SharedStrings);
+    }
+
+    private void EndSheet(SaveSession session)
+    {
+        var saved = session.Sheet!;
+        var writer = saved.Writer!;
+        writer.WriteEndElement();
+
+        foreach (var element in saved.Document.Root!.Elements().SkipWhile(e => e.Name != SheetDataElement).Skip(1))
+        {
+            element.WriteTo(writer);
+        }
+
+        writer.WriteEndElement();
+        writer.WriteEndDocument();
+        writer.Dispose();
+        saved.Entry!.Dispose();
+
+        foreach (var (table, id) in saved.Tables)
+        {
+            SaveTable(session.Archive, table, id, WrittenRange(table, saved.Frame, saved.Last));
+        }
+
+        if (saved.Relationships.Count > 0)
+        {
+            SaveSheetRelationships(session.Archive, saved.Name, saved.Relationships);
+        }
+
+        session.Sheet = null;
+    }
+
+    private static RangeRef WrittenRange(Table table, int frame, int last) =>
+        last > frame && !table.ShowTotals && table.Range.End.Row == frame
+            ? new RangeRef(table.Range.Start, new CellRef(last, table.Range.End.Column))
+            : table.Range;
+
+    private static List<(string Id, string Url)> AddHyperlinks(Worksheet sheet, XDocument sheetDoc)
+    {
+        var rels = new List<(string Id, string Url)>();
+        var ns = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
+        XNamespace rNs = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+        var relIndex = 1;
+
+        XElement? hyperlinksElement = null;
+
+        foreach (var cell in sheet.Cells.GetPopulatedCells())
+        {
+            if (cell.Hyperlink is not null)
+            {
+                hyperlinksElement ??= new XElement(XName.Get("hyperlinks", ns));
+
+                var relId = $"rId{relIndex++}";
+                var cellRef = cell.Address.ToString();
+
+                var hyperlinkElement = new XElement(XName.Get("hyperlink", ns),
+                    new XAttribute("ref", cellRef),
+                    new XAttribute(rNs + "id", relId));
+
+                if (cell.Hyperlink.Text is not null)
+                {
+                    hyperlinkElement.Add(new XAttribute("display", cell.Hyperlink.Text));
+                }
+
+                hyperlinksElement.Add(hyperlinkElement);
+                rels.Add((relId, cell.Hyperlink.Url));
+            }
+        }
+
+        if (hyperlinksElement is not null)
+        {
+            sheetDoc.Root!.Add(hyperlinksElement);
+        }
+
+        return rels;
+    }
+
+    private static void SaveSheetRelationships(ZipArchive archive, string sheetName, List<(string Id, string Type, string Target, bool External)> rels)
+    {
+        var pkgNs = "http://schemas.openxmlformats.org/package/2006/relationships";
+        var relsDoc = new XDocument(
+            new XElement(XName.Get("Relationships", pkgNs)));
+
+        foreach (var (id, type, target, external) in rels)
+        {
+            var relElement = new XElement(XName.Get("Relationship", pkgNs),
+                new XAttribute("Id", id),
+                new XAttribute("Type", type),
+                new XAttribute("Target", target));
+
+            if (external)
+            {
+                relElement.Add(new XAttribute("TargetMode", "External"));
+            }
+
+            relsDoc.Root!.Add(relElement);
+        }
+
+        using (var entry = archive.CreateEntry($"xl/worksheets/_rels/{sheetName}.rels").Open())
+        {
+            relsDoc.Save(entry);
+        }
+    }
+
+    private static XDocument CreateSheetDocument(Worksheet sheet, int sheetId, string relId)
+    {
+        var uid = Guid.NewGuid().ToString("B").ToUpperInvariant();
+        XNamespace ns = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
+
+        var worksheet = new XElement(ns + "worksheet",
+            new XAttribute(XName.Get("uid", "http://schemas.microsoft.com/office/spreadsheetml/2014/revision"), uid));
+
+        var sheetPr = CreateSheetProperties(sheet);
+        if (sheetPr is not null)
+        {
+            worksheet.Add(sheetPr);
+        }
+
+        worksheet.Add(CreateDimension(sheet));
+        worksheet.Add(CreateSheetViews(sheet));
+        worksheet.Add(CreateSheetFormatPr(sheet));
+        var cols = CreateColumns(sheet);
+        if (cols is not null)
+        {
+            worksheet.Add(cols);
+        }
+
+        worksheet.Add(new XElement(ns + "sheetData"));
+
+        return new XDocument(worksheet);
+    }
+
+    private static XElement? CreateSheetProperties(Worksheet sheet)
+    {
+        if (sheet.Filters.Count == 0)
+        {
+            return null;
+        }
+        return new XElement(XName.Get("sheetPr", "http://schemas.openxmlformats.org/spreadsheetml/2006/main"),
+            new XAttribute("filterMode", "1"));
+    }
+
+    private static XElement CreateSheetFormatPr(Worksheet sheet)
+    {
+        return new XElement(XName.Get("sheetFormatPr", "http://schemas.openxmlformats.org/spreadsheetml/2006/main"),
+            new XAttribute("defaultColWidth", ColumnWidthConversion.PixelsToChars(sheet.Columns.Size)),
+            new XAttribute("defaultRowHeight", "14.25"));
+    }
+
+    private static XElement CreatePageMargins()
+    {
+        return new XElement(XName.Get("pageMargins", "http://schemas.openxmlformats.org/spreadsheetml/2006/main"),
+            new XAttribute("left", "0.7"),
+            new XAttribute("right", "0.7"),
+            new XAttribute("top", "0.75"),
+            new XAttribute("bottom", "0.75"),
+            new XAttribute("header", "0.3"),
+            new XAttribute("footer", "0.3"));
+    }
+
+    private static XElement CreateDimension(Worksheet sheet)
+    {
+        var refStr = sheet.RowCount == 1 && sheet.ColumnCount == 1
+            ? "A1"
+            : $"A1:{new CellRef(sheet.RowCount - 1, sheet.ColumnCount - 1)}";
+
+        return new XElement(XName.Get("dimension", "http://schemas.openxmlformats.org/spreadsheetml/2006/main"),
+            new XAttribute("ref", refStr));
+    }
+
+    private static XElement CreateSheetViews(Worksheet sheet)
+    {
+        XNamespace ns = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
+        var sheetView = new XElement(ns + "sheetView",
+            new XAttribute("workbookViewId", "0"));
+
+        if (sheet.RightToLeft)
+        {
+            sheetView.Add(new XAttribute("rightToLeft", "1"));
+        }
+
+        if (sheet.Columns.Frozen != 0 || sheet.Rows.Frozen != 0)
+        {
+            sheetView.Add(new XElement(ns + "pane",
+                new XAttribute("xSplit", sheet.Columns.Frozen),
+                new XAttribute("ySplit", sheet.Rows.Frozen),
+                new XAttribute("topLeftCell", new CellRef(sheet.Rows.Frozen, sheet.Columns.Frozen).ToString()),
+                new XAttribute("activePane", "topLeft"),
+                new XAttribute("state", "frozen")));
+        }
+
+        return new XElement(ns + "sheetViews", sheetView);
+    }
+
+    private static XElement? CreateColumns(Worksheet sheet)
+    {
+        var autoFitWidths = ComputeAutoFitWidths(sheet);
+
+        var colElements = Enumerable.Range(0, sheet.ColumnCount)
+            .Where(col => Math.Abs(sheet.Columns[col] - sheet.Columns.Size) > 1e-6 || sheet.Columns.IsAutoFit(col))
+            .Select(col => new XElement(XName.Get("col", "http://schemas.openxmlformats.org/spreadsheetml/2006/main"),
+                new XAttribute("min", col + 1),
+                new XAttribute("max", col + 1),
+                new XAttribute("width", ColumnWidthConversion.PixelsToChars(autoFitWidths.TryGetValue(col, out var autoFitWidth) ? autoFitWidth : sheet.Columns[col])),
+                sheet.Columns.IsAutoFit(col) ? new XAttribute("bestFit", "1") : null,
+                new XAttribute("customWidth", "1")))
+            .ToList();
+
+        if (colElements.Count == 0)
+        {
+            return null;
+        }
+
+        return new XElement(XName.Get("cols", "http://schemas.openxmlformats.org/spreadsheetml/2006/main"), colElements);
+    }
+
+    // Auto fitted columns were sized against the browser font; Excel renders the Normal font with
+    // different metrics, so recompute their width from the content using Excel's own character
+    // widths and keep whichever is larger.
+    private static Dictionary<int, double> ComputeAutoFitWidths(Worksheet sheet)
+    {
+        var widths = new Dictionary<int, double>();
+
+        foreach (var cell in sheet.Cells.GetPopulatedCells().ToList())
+        {
+            var col = cell.Address.Column;
+
+            if (!sheet.Columns.IsAutoFit(col) || sheet.MergedCells.Contains(cell.Address))
+            {
+                continue;
+            }
+
+            string? text;
+            Format? format;
+
+            try
+            {
+                // Autofit widths must be culture-independent so saved <col> XML is deterministic.
+                text = cell.FormatDisplayText(CultureInfo.InvariantCulture);
+                format = cell.GetEffectiveFormat();
+            }
+            catch (ArgumentOutOfRangeException)
+            {
+                continue;
+            }
+
+            if (string.IsNullOrEmpty(text))
+            {
+                continue;
+            }
+
+            text = ExcelTextMetrics.DisplayLine(text, format?.WrapText == true);
+
+            var required = ExcelTextMetrics.EstimateWidth(text, format?.Bold == true, format?.FontSize) + 5;
+            var current = widths.TryGetValue(col, out var value) ? value : sheet.Columns[col];
+
+            if (required > current)
+            {
+                widths[col] = Math.Min(required, ColumnWidthConversion.MaxWidthInPixels);
+            }
+        }
+
+        return widths;
+    }
+
+    // ECMA-376 part 1, 18.3.1.40 (shared formulas)
+    private static Dictionary<CellRef, (int Si, string? Ref)> BuildSharedFormulaGroups(Worksheet sheet)
+    {
+        var formulas = new Dictionary<CellRef, string>();
+
+        foreach (var cell in sheet.Cells.GetPopulatedCells())
+        {
+            if (!string.IsNullOrEmpty(cell.Formula))
+            {
+                formulas[cell.Address] = cell.Formula;
+            }
+        }
+
+        var groups = new Dictionary<CellRef, (int Si, string? Ref)>();
+        var si = 0;
+
+        void CollectRuns(bool vertical)
+        {
+            var starts = vertical
+                ? formulas.Keys.OrderBy(a => a.Column).ThenBy(a => a.Row)
+                : formulas.Keys.OrderBy(a => a.Row).ThenBy(a => a.Column);
+
+            foreach (var start in starts.ToList())
+            {
+                if (groups.ContainsKey(start))
+                {
+                    continue;
+                }
+
+                var run = new List<CellRef> { start };
+
+                while (true)
+                {
+                    var next = vertical
+                        ? new CellRef(start.Row + run.Count, start.Column)
+                        : new CellRef(start.Row, start.Column + run.Count);
+
+                    if (groups.ContainsKey(next) || !formulas.TryGetValue(next, out var formula))
+                    {
+                        break;
+                    }
+
+                    var expected = Worksheet.AdjustFormulaForCopy(formulas[start],
+                        next.Row - start.Row, next.Column - start.Column);
+
+                    if (!string.Equals(formula, expected, StringComparison.Ordinal))
+                    {
+                        break;
+                    }
+
+                    run.Add(next);
+                }
+
+                if (run.Count < 2)
+                {
+                    continue;
+                }
+
+                groups[start] = (si, new RangeRef(start, run[^1]).ToString());
+
+                foreach (var follower in run.Skip(1))
+                {
+                    groups[follower] = (si, null);
+                }
+
+                si++;
+            }
+        }
+
+        CollectRuns(vertical: true);
+        CollectRuns(vertical: false);
+
+        return groups;
+    }
+
+    // Apple Numbers reads the indentation whitespace inside <is> as part of the cell text.
+    private static readonly XmlWriterSettings PartXmlSettings = new() { Indent = false };
+
+    private static readonly XName SheetDataElement = XName.Get("sheetData", Main);
+
+    private void WriteSheetStart(SheetSave saved, StyleTracker styleTracker, SharedStringTable sharedStrings)
+    {
+        var writer = saved.Writer!;
+        var root = saved.Document.Root!;
+        writer.WriteStartDocument();
+        writer.WriteStartElement(root.Name.LocalName, root.Name.NamespaceName);
+
+        foreach (var attribute in root.Attributes())
+        {
+            writer.WriteAttributeString(attribute.Name.LocalName, attribute.Name.NamespaceName, attribute.Value);
+        }
+
+        foreach (var element in root.Elements())
+        {
+            if (element.Name == SheetDataElement)
+            {
+                writer.WriteStartElement(SheetDataElement.LocalName, Main);
+                break;
+            }
+
+            element.WriteTo(writer);
+        }
+
+        var sharedFormulas = BuildSharedFormulaGroups(saved.Sheet);
+        var cells = ArrayPool<Cell>.Shared.Rent(saved.Sheet.Cells.PopulatedCount);
+
+        try
+        {
+            saved.Frame = WriteRows(writer, saved.Sheet, cells, styleTracker, sharedStrings, sharedFormulas);
+            saved.Last = saved.Frame;
+        }
+        finally
+        {
+            ArrayPool<Cell>.Shared.Return(cells, clearArray: true);
+        }
+    }
+
+    private void Append<T>(SaveSession session, T[] line, Func<T, (CellData? Data, Format? Format)> getCell, bool useInlineStrings)
+    {
+        var saved = session.Sheet!;
+        var writer = saved.Writer!;
+        var sheet = saved.Sheet;
+        var styleTracker = session.Styles;
+        var row = saved.Last + 1;
+
+        if (row == Worksheet.MaxRows)
+        {
+            throw new InvalidOperationException($"Row {row + 1} is past the {Worksheet.MaxRows} rows a worksheet holds.");
+        }
+
+        if (line.Length > Worksheet.MaxColumns)
+        {
+            throw new InvalidOperationException(
+                $"Row {row + 1} has {line.Length} cells, and a worksheet holds at most {Worksheet.MaxColumns} columns.");
+        }
+
+        var firstColumn = -1;
+        var lastColumn = -1;
+
+        for (var column = 0; column < line.Length; column++)
+        {
+            var cell = getCell(line[column]);
+
+            if (cell.Data?.Value is not null || cell.Format?.IsDefault == false)
+            {
+                if (firstColumn < 0)
+                {
+                    firstColumn = column;
+                }
+
+                lastColumn = column;
+            }
+        }
+
+        WriteRowStart(writer, sheet, row, firstColumn, lastColumn);
+
+        for (var column = firstColumn; column >= 0 && column <= lastColumn; column++)
+        {
+            var (data, format) = getCell(line[column]);
+            var value = data?.Value;
+            var type = data?.Type ?? default;
+
+            if (value is null && format?.IsDefault != false)
+            {
+                continue;
+            }
+
+            var address = new CellRef(row, column);
+
+            var quoted = false;
+
+            if (value is string text)
+            {
+                if (text.Length > MaxCellCharacters)
+                {
+                    throw new InvalidOperationException(
+                        $"A cell holds at most {MaxCellCharacters} characters, and {address} was given {text.Length}.");
+                }
+
+                quoted = type == CellDataType.String
+                    && CellData.TryConvertFromString(text, CultureInfo.InvariantCulture, out _, out _);
+            }
+
+            format ??= DefaultFormat;
+
+            if (!streamedStyles.TryGetValue((format, type, quoted), out var style))
+            {
+                style = !format.IsDefault || type == CellDataType.Date || quoted
+                    ? GetOrCreateCellStyle(format, type, quoted, styleTracker)
+                    : null;
+
+                if (streamedStyles.Count < MaxStreamedStyles)
+                {
+                    streamedStyles[(format, type, quoted)] = style;
+                }
+            }
+
+            if (value is null)
+            {
+                if (style is not null)
+                {
+                    WritePlaceholder(writer, address, style);
+                }
+            }
+            else if (type == CellDataType.String && useInlineStrings)
+            {
+                WriteInlineStringCell(writer, address, (string)value, style);
+            }
+            else
+            {
+                WriteValueCell(writer, address, value, type, style, session.SharedStrings);
+            }
+        }
+
+        writer.WriteEndElement();
+
+        saved.Last = row;
+    }
+
+    private int WriteRows(XmlWriter writer, Worksheet sheet, Cell[] cells, StyleTracker styleTracker, SharedStringTable sharedStrings, Dictionary<CellRef, (int Si, string? Ref)> sharedFormulas)
+    {
+        var count = 0;
+        var last = -1;
+
+        foreach (var cell in sheet.Cells.GetPopulatedCells())
+        {
+            if (IsWritten(cell))
+            {
+                cells[count++] = cell;
+            }
+        }
+
+        Array.Sort(cells, 0, count, CellOrder.Instance);
+
+        var placeholders = CreateMergePlaceholders(sheet);
+        var styledRows = CollectStyledRowIndices(sheet);
+
+        var cellIndex = 0;
+        var placeholderIndex = 0;
+        var styledRowIndex = 0;
+
+        while (cellIndex < count || placeholderIndex < placeholders.Count || styledRowIndex < styledRows.Count)
+        {
+            var row = int.MaxValue;
+
+            if (cellIndex < count)
+            {
+                row = Math.Min(row, cells[cellIndex].Address.Row);
+            }
+
+            if (placeholderIndex < placeholders.Count)
+            {
+                row = Math.Min(row, placeholders[placeholderIndex].Address.Row);
+            }
+
+            if (styledRowIndex < styledRows.Count)
+            {
+                row = Math.Min(row, styledRows[styledRowIndex]);
+            }
+
+            last = row;
+
+            var cellEnd = cellIndex;
+
+            while (cellEnd < count && cells[cellEnd].Address.Row == row)
+            {
+                cellEnd++;
+            }
+
+            var placeholderEnd = placeholderIndex;
+
+            while (placeholderEnd < placeholders.Count && placeholders[placeholderEnd].Address.Row == row)
+            {
+                placeholderEnd++;
+            }
+
+            var firstColumn = -1;
+            var lastColumn = -1;
+
+            if (cellEnd > cellIndex)
+            {
+                firstColumn = cells[cellIndex].Address.Column;
+                lastColumn = cells[cellEnd - 1].Address.Column;
+            }
+
+            if (placeholderEnd > placeholderIndex)
+            {
+                var column = placeholders[placeholderIndex].Address.Column;
+
+                if (firstColumn < 0 || column < firstColumn)
+                {
+                    firstColumn = column;
+                }
+
+                lastColumn = Math.Max(lastColumn, placeholders[placeholderEnd - 1].Address.Column);
+            }
+
+            WriteRowStart(writer, sheet, row, firstColumn, lastColumn);
+
+            var writtenColumn = -1;
+
+            while (cellIndex < cellEnd || placeholderIndex < placeholderEnd)
+            {
+                var cellColumn = cellIndex < cellEnd ? cells[cellIndex].Address.Column : int.MaxValue;
+                var placeholderColumn = placeholderIndex < placeholderEnd ? placeholders[placeholderIndex].Address.Column : int.MaxValue;
+
+                if (cellColumn <= placeholderColumn)
+                {
+                    writtenColumn = cellColumn;
+                    WriteCell(writer, cells[cellIndex++], styleTracker, sharedStrings, sharedFormulas);
+                }
+                else
+                {
+                    var placeholder = placeholders[placeholderIndex++];
+
+                    if (placeholderColumn > writtenColumn)
+                    {
+                        writtenColumn = placeholderColumn;
+                        WritePlaceholder(writer, placeholder.Address, GetPlaceholderStyle(placeholder.Anchor, styleTracker));
+                    }
+                }
+            }
+
+            while (styledRowIndex < styledRows.Count && styledRows[styledRowIndex] <= row)
+            {
+                styledRowIndex++;
+            }
+
+            writer.WriteEndElement();
+        }
+
+        return last;
+    }
+
+    private void WriteRowStart(XmlWriter writer, Worksheet sheet, int row, int firstColumn, int lastColumn)
+    {
+        writer.WriteStartElement("row", Main);
+        WriteNumberAttribute(writer, "r", row + 1);
+
+        if (Math.Abs(sheet.Rows[row] - sheet.Rows.Size) > 1e-6)
+        {
+            writer.WriteAttributeString("ht", XmlConvert.ToString(sheet.Rows[row]));
+            writer.WriteAttributeString("customHeight", "1");
+        }
+
+        if (sheet.Rows.IsHidden(row))
+        {
+            writer.WriteAttributeString("hidden", "1");
+        }
+
+        if (firstColumn >= 0)
+        {
+            (firstColumn + 1).TryFormat(scratch, out var first, provider: CultureInfo.InvariantCulture);
+            scratch[first] = ':';
+            (lastColumn + 1).TryFormat(scratch.AsSpan(first + 1), out var last, provider: CultureInfo.InvariantCulture);
+
+            writer.WriteStartAttribute("spans");
+            writer.WriteRaw(scratch, 0, first + 1 + last);
+            writer.WriteEndAttribute();
+        }
+    }
+
+    private void WritePlaceholder(XmlWriter writer, CellRef address, int? styleId)
+    {
+        WriteCellStart(writer, address, styleId);
+        writer.WriteEndElement();
+    }
+
+    private void WriteCellStart(XmlWriter writer, CellRef address, int? style)
+    {
+        writer.WriteStartElement("c", Main);
+        WriteReferenceAttribute(writer, address);
+
+        if (style is not null)
+        {
+            WriteNumberAttribute(writer, "s", style.Value);
+        }
+    }
+
+    private void WriteReferenceAttribute(XmlWriter writer, CellRef address)
+    {
+        var length = address.Format(scratch);
+
+        writer.WriteStartAttribute("r");
+        writer.WriteRaw(scratch, 0, length);
+        writer.WriteEndAttribute();
+    }
+
+    private void WriteNumberAttribute(XmlWriter writer, string name, int value)
+    {
+        value.TryFormat(scratch, out var length, provider: CultureInfo.InvariantCulture);
+
+        writer.WriteStartAttribute(name);
+        writer.WriteRaw(scratch, 0, length);
+        writer.WriteEndAttribute();
+    }
+
+    private void WriteNumberValue(XmlWriter writer, int value)
+    {
+        value.TryFormat(scratch, out var length, provider: CultureInfo.InvariantCulture);
+
+        WriteRawValue(writer, length);
+    }
+
+    private void WriteRawValue(XmlWriter writer, int length)
+    {
+        writer.WriteStartElement("v", Main);
+        writer.WriteRaw(scratch, 0, length);
+        writer.WriteEndElement();
+    }
+
+    private void WriteCell(XmlWriter writer, Cell cell, StyleTracker styleTracker, SharedStringTable sharedStrings, Dictionary<CellRef, (int Si, string? Ref)> sharedFormulas)
+    {
+        var style = HasCellFormatting(cell) ? GetOrCreateCellStyle(cell, styleTracker) : (int?)null;
+
+        if (string.IsNullOrEmpty(cell.Formula))
+        {
+            WriteValueCell(writer, cell.Address, cell.Value, cell.ValueType, style, sharedStrings);
+
+            return;
+        }
+
+        WriteCellStart(writer, cell.Address, style);
+
+        var type = CellTypeAttribute(cell.ValueType, isFormula: true);
+
+        if (type is not null)
+        {
+            writer.WriteAttributeString("t", type);
+        }
+
+        WriteFormula(writer, cell, sharedFormulas);
+        WriteTypedValue(writer, cell.Value, cell.ValueType);
+
+        writer.WriteEndElement();
+    }
+
+    private void WriteInlineStringCell(XmlWriter writer, CellRef address, string text, int? style)
+    {
+        WriteCellStart(writer, address, style);
+
+        writer.WriteAttributeString("t", "inlineStr");
+        writer.WriteStartElement("is", Main);
+        WriteStringText(writer, text);
+        writer.WriteFullEndElement();
+        writer.WriteEndElement();
+    }
+
+    private static void WriteStringText(XmlWriter writer, string text)
+    {
+        writer.WriteStartElement("t", Main);
+
+        if (text.Length > 0 && (XmlConvert.IsWhitespaceChar(text[0]) || XmlConvert.IsWhitespaceChar(text[^1])))
+        {
+            writer.WriteAttributeString("xml", "space", null, "preserve");
+        }
+
+        writer.WriteString(text);
+        writer.WriteFullEndElement();
+    }
+
+    private void WriteValueCell(XmlWriter writer, CellRef address, object? value, CellDataType valueType, int? style, SharedStringTable sharedStrings)
+    {
+        WriteCellStart(writer, address, style);
+
+        var type = CellTypeAttribute(valueType, isFormula: false);
+
+        if (type is not null)
+        {
+            writer.WriteAttributeString("t", type);
+        }
+
+        if (valueType == CellDataType.String)
+        {
+            WriteNumberValue(writer, sharedStrings.GetOrAdd(value as string ?? string.Empty));
+        }
+        else
+        {
+            WriteTypedValue(writer, value, valueType);
+        }
+
+        writer.WriteEndElement();
+    }
+
+    private static string? CellTypeAttribute(CellDataType valueType, bool isFormula) => valueType switch
+    {
+        CellDataType.String => isFormula ? "str" : "s",
+        CellDataType.Boolean => "b",
+        CellDataType.Error => "e",
+        _ => null,
+    };
+
+    private void WriteFormula(XmlWriter writer, Cell cell, Dictionary<CellRef, (int Si, string? Ref)> sharedFormulas)
+    {
+        var formula = cell.Formula!.StartsWith('=') ? cell.Formula![1..] : cell.Formula!;
+
+        writer.WriteStartElement("f", Main);
+
+        if (sharedFormulas.TryGetValue(cell.Address, out var shared))
+        {
+            writer.WriteAttributeString("t", "shared");
+
+            if (shared.Ref is not null)
+            {
+                writer.WriteAttributeString("ref", shared.Ref);
+            }
+
+            WriteNumberAttribute(writer, "si", shared.Si);
+
+            if (shared.Ref is null)
+            {
+                writer.WriteEndElement();
+
+                return;
+            }
+        }
+
+        writer.WriteString(formula);
+        writer.WriteFullEndElement();
+    }
+
+    private void WriteTypedValue(XmlWriter writer, object? value, CellDataType valueType)
+    {
+        switch (valueType)
+        {
+            case CellDataType.Number:
+            case CellDataType.String:
+                if (TryFormatNumber(value, out var length))
+                {
+                    WriteRawValue(writer, length);
+                }
+                else
+                {
+                    WriteValue(writer, FormatValueInvariant(value));
+                }
+                break;
+
+            case CellDataType.Boolean:
+                WriteValue(writer, value is true ? "1" : "0");
+                break;
+
+            case CellDataType.Date:
+                if (value is DateTime dateValue)
+                {
+                    dateValue.ToNumber().TryFormat(scratch, out var digits, provider: CultureInfo.InvariantCulture);
+
+                    WriteRawValue(writer, digits);
+                }
+                break;
+
+            case CellDataType.Error:
+                WriteValue(writer, value is CellError error ? CellErrorToString(error) : "#NAME?");
+                break;
+
+            case CellDataType.Empty:
+                break;
+        }
+    }
+
+    private bool TryFormatNumber(object? value, out int length)
+    {
+        if (value is ISpanFormattable number)
+        {
+            return number.TryFormat(scratch, out length, default, CultureInfo.InvariantCulture);
+        }
+
+        length = 0;
+
+        return false;
+    }
+
+    private static void WriteValue(XmlWriter writer, string text)
+    {
+        writer.WriteStartElement("v", Main);
+        writer.WriteString(text);
+        writer.WriteFullEndElement();
+    }
+
+    private static List<Placeholder> CreateMergePlaceholders(Worksheet sheet)
+    {
+        var placeholders = new List<Placeholder>();
+
+        foreach (var range in sheet.MergedCells.Ranges)
+        {
+            var anchor = sheet.Cells.Find(range.Start.Row, range.Start.Column);
+            var style = anchor is not null && HasCellFormatting(anchor) ? new MergeAnchor(anchor) : null;
+
+            for (var r = range.Start.Row; r <= range.End.Row; r++)
+            {
+                for (var c = range.Start.Column; c <= range.End.Column; c++)
+                {
+                    if (r == range.Start.Row && c == range.Start.Column)
+                    {
+                        continue;
+                    }
+
+                    var cell = sheet.Cells.Find(r, c);
+
+                    if (cell is not null && IsWritten(cell))
+                    {
+                        continue;
+                    }
+
+                    placeholders.Add(new Placeholder(new CellRef(r, c), placeholders.Count, style));
+                }
+            }
+        }
+
+        placeholders.Sort();
+
+        return placeholders;
+    }
+
+    private int? GetPlaceholderStyle(MergeAnchor? anchor, StyleTracker styleTracker)
+    {
+        if (anchor is null)
+        {
+            return null;
+        }
+
+        return anchor.StyleId ??= GetOrCreateCellStyle(anchor.Cell, styleTracker);
+    }
+
+    private sealed class MergeAnchor(Cell cell)
+    {
+        public Cell Cell => cell;
+
+        public int? StyleId;
+    }
+
+    private readonly record struct Placeholder(CellRef Address, int Order, MergeAnchor? Anchor) : IComparable<Placeholder>
+    {
+        public int CompareTo(Placeholder other)
+        {
+            var byRow = Address.Row.CompareTo(other.Address.Row);
+
+            if (byRow != 0)
+            {
+                return byRow;
+            }
+
+            var byColumn = Address.Column.CompareTo(other.Address.Column);
+
+            return byColumn != 0 ? byColumn : Order.CompareTo(other.Order);
+        }
+    }
+
+    private sealed class CellOrder : IComparer<Cell>
+    {
+        public static readonly CellOrder Instance = new();
+
+        public int Compare(Cell? left, Cell? right)
+        {
+            var byRow = left!.Address.Row.CompareTo(right!.Address.Row);
+
+            return byRow != 0 ? byRow : left.Address.Column.CompareTo(right.Address.Column);
+        }
+    }
+
+    private static bool IsWritten(Cell cell) => cell.Value is not null || cell.Formula is not null || HasCellFormatting(cell);
+
+    private static List<int> CollectStyledRowIndices(Worksheet sheet)
+    {
+        var rows = new List<int>();
+
+        foreach (var row in sheet.Rows.GetCustomSizedIndices())
+        {
+            rows.Add(row);
+        }
+
+        foreach (var row in sheet.Rows.GetHiddenIndices())
+        {
+            rows.Add(row);
+        }
+
+        rows.Sort();
+
+        return rows;
+    }
+
+    private static bool HasCellFormatting(Cell cell)
+    {
+        return cell.FormatOrNull?.IsDefault == false || cell.ValueType == CellDataType.Date || cell.QuotePrefix;
+    }
+
+    private static readonly Format DefaultFormat = new();
+
+    private int GetOrCreateCellStyle(Cell cell, StyleTracker styleTracker) =>
+        GetOrCreateCellStyle(cell.FormatOrNull ?? DefaultFormat, cell.ValueType, cell.QuotePrefix, styleTracker);
+
+    private int GetOrCreateCellStyle(Format format, CellDataType valueType, bool quotePrefix, StyleTracker styleTracker)
+    {
+        var fontId = GetOrCreateFontStyle(format, styleTracker);
+        var fillId = GetOrCreateFillStyle(format, styleTracker);
+        var numFmtId = GetOrCreateNumberFormat(valueType, format, styleTracker);
+        var borderId = GetOrCreateBorderStyle(format, styleTracker);
+
+        var styleKey = new CellStyleKey(fontId, fillId, borderId, format.TextAlign, format.VerticalAlign, format.WrapText, numFmtId, format.Locked, format.FormulaHidden, quotePrefix);
+
+        if (!styleTracker.CellStyles.TryGetValue(styleKey, out int styleId))
+        {
+            styleId = styleTracker.CellStyles.Count + 1;
+            styleTracker.CellStyles[styleKey] = styleId;
+            CreateCellStyleElement(format, fontId, fillId, borderId, numFmtId, quotePrefix, styleTracker);
+        }
+
+        return styleId;
+    }
+
+    private int GetOrCreateFontStyle(Format format, StyleTracker styleTracker)
+    {
+        var fontKey = new FontKey(format.Color, format.Bold, format.Italic, format.Underline, format.Strikethrough, format.FontFamily, format.FontSize);
+
+        if (!styleTracker.FontStyles.TryGetValue(fontKey, out int fontId))
+        {
+            fontId = styleTracker.FontStyles.Count + 1;
+            styleTracker.FontStyles[fontKey] = fontId;
+            CreateFontElement(format, fontId, styleTracker);
+        }
+
+        return fontId;
+    }
+
+    private int GetOrCreateFillStyle(Format format, StyleTracker styleTracker)
+    {
+        var backgroundColor = format.BackgroundColor;
+
+        if (backgroundColor is null)
+        {
+            return 0;
+        }
+
+        if (!styleTracker.FillStyles.TryGetValue(backgroundColor, out int fillId))
+        {
+            fillId = styleTracker.FillStyles.Count + 2; // Start from 2 as 0 and 1 are reserved
+            styleTracker.FillStyles[backgroundColor] = fillId;
+            CreateFillElement(backgroundColor, fillId, styleTracker);
+        }
+
+        return fillId;
+    }
+
+    private int GetOrCreateBorderStyle(Format format, StyleTracker styleTracker)
+    {
+        var bt = format.BorderTop;
+        var br = format.BorderRight;
+        var bb = format.BorderBottom;
+        var bl = format.BorderLeft;
+
+        if (bt is null && br is null && bb is null && bl is null)
+        {
+            return 0;
+        }
+
+        var borderKey = new BorderKey(
+            bt?.ToXlsxStyle(), bt?.Color,
+            br?.ToXlsxStyle(), br?.Color,
+            bb?.ToXlsxStyle(), bb?.Color,
+            bl?.ToXlsxStyle(), bl?.Color
+        );
+
+        if (!styleTracker.BorderStyles.TryGetValue(borderKey, out int borderId))
+        {
+            borderId = styleTracker.BorderStyles.Count + 1;
+            styleTracker.BorderStyles[borderKey] = borderId;
+            CreateBorderElement(bl, br, bt, bb, styleTracker);
+        }
+
+        return borderId;
+    }
+
+    private static void CreateBorderElement(BorderStyle? left, BorderStyle? right, BorderStyle? top, BorderStyle? bottom, StyleTracker styleTracker)
+    {
+        var ns = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
+
+        var borderElement = new XElement(XName.Get("border", ns));
+
+        AddBorderSide(borderElement, "left", left, ns);
+        AddBorderSide(borderElement, "right", right, ns);
+        AddBorderSide(borderElement, "top", top, ns);
+        AddBorderSide(borderElement, "bottom", bottom, ns);
+        borderElement.Add(new XElement(XName.Get("diagonal", ns)));
+
+        styleTracker.BordersElement.Add(borderElement);
+        styleTracker.BordersElement.Attribute("count")!.Value = (styleTracker.BorderStyles.Count + 1).ToString(CultureInfo.InvariantCulture);
+    }
+
+    private static void AddBorderSide(XElement borderElement, string side, BorderStyle? style, string ns)
+    {
+        var sideElement = new XElement(XName.Get(side, ns));
+
+        if (style is not null && style.LineStyle != BorderLineStyle.None)
+        {
+            sideElement.Add(new XAttribute("style", style.ToXlsxStyle()));
+            sideElement.Add(new XElement(XName.Get("color", ns),
+                new XAttribute("rgb", style.Color.ToXLSXColor())));
+        }
+
+        borderElement.Add(sideElement);
+    }
+
+    private static int GetOrCreateNumberFormat(CellDataType valueType, Format format, StyleTracker styleTracker)
+    {
+        var formatCode = format.NumberFormat;
+
+        // Auto-apply default date format for date values without explicit format
+        if (string.IsNullOrEmpty(formatCode) && valueType == CellDataType.Date)
+        {
+            return 14; // mm/dd/yyyy
+        }
+
+        if (string.IsNullOrEmpty(formatCode) ||
+            string.Equals(formatCode, "General", StringComparison.OrdinalIgnoreCase))
+        {
+            return 0;
+        }
+
+        // Check built-in formats first
+        var builtInId = NumberFormatPresets.GetNumFmtId(formatCode);
+        if (builtInId >= 0)
+        {
+            return builtInId;
+        }
+
+        if (styleTracker.NumberFormats.TryGetValue(formatCode, out var existingId))
+        {
+            return existingId;
+        }
+
+        // Assign new custom ID (164+)
+        var newId = 164 + styleTracker.NumberFormats.Count;
+        styleTracker.NumberFormats[formatCode] = newId;
+
+        if (styleTracker.NumFmtsElement is null)
+        {
+            styleTracker.NumFmtsElement = new XElement(XName.Get("numFmts", "http://schemas.openxmlformats.org/spreadsheetml/2006/main"),
+                new XAttribute("count", "0"));
+            // Insert before fonts element
+            styleTracker.FontsElement.AddBeforeSelf(styleTracker.NumFmtsElement);
+        }
+
+        styleTracker.NumFmtsElement.Add(new XElement(XName.Get("numFmt", "http://schemas.openxmlformats.org/spreadsheetml/2006/main"),
+            new XAttribute("numFmtId", newId.ToString(CultureInfo.InvariantCulture)),
+            new XAttribute("formatCode", formatCode)));
+        styleTracker.NumFmtsElement.Attribute("count")!.Value = styleTracker.NumberFormats.Count.ToString(CultureInfo.InvariantCulture);
+
+        return newId;
+    }
+
+    private void CreateFontElement(Format format, int fontId, StyleTracker styleTracker)
+    {
+        var fontSize = format.FontSize ?? 11;
+        var fontName = format.FontFamily ?? "Aptos Narrow";
+
+        var fontElement = new XElement(XName.Get("font", "http://schemas.openxmlformats.org/spreadsheetml/2006/main"),
+            new XElement(XName.Get("sz", "http://schemas.openxmlformats.org/spreadsheetml/2006/main"),
+                new XAttribute("val", fontSize.ToString(CultureInfo.InvariantCulture))),
+            new XElement(XName.Get("name", "http://schemas.openxmlformats.org/spreadsheetml/2006/main"),
+                new XAttribute("val", fontName)));
+
+        if (format.Color is not null)
+        {
+            fontElement.Add(new XElement(XName.Get("color", "http://schemas.openxmlformats.org/spreadsheetml/2006/main"),
+                new XAttribute("rgb", format.Color.ToXLSXColor())));
+        }
+        if (format.Bold)
+        {
+            fontElement.Add(new XElement(XName.Get("b", "http://schemas.openxmlformats.org/spreadsheetml/2006/main")));
+        }
+        if (format.Italic)
+        {
+            fontElement.Add(new XElement(XName.Get("i", "http://schemas.openxmlformats.org/spreadsheetml/2006/main")));
+        }
+        if (format.Underline)
+        {
+            fontElement.Add(new XElement(XName.Get("u", "http://schemas.openxmlformats.org/spreadsheetml/2006/main")));
+        }
+        if (format.Strikethrough)
+        {
+            fontElement.Add(new XElement(XName.Get("strike", "http://schemas.openxmlformats.org/spreadsheetml/2006/main")));
+        }
+
+        styleTracker.FontsElement.Add(fontElement);
+        styleTracker.FontsElement.Attribute("count")!.Value = (styleTracker.FontStyles.Count + 1).ToString(CultureInfo.InvariantCulture);
+    }
+
+    private void CreateFillElement(string backgroundColor, int fillId, StyleTracker styleTracker)
+    {
+        var fillElement = new XElement(XName.Get("fill", "http://schemas.openxmlformats.org/spreadsheetml/2006/main"),
+            new XElement(XName.Get("patternFill", "http://schemas.openxmlformats.org/spreadsheetml/2006/main"),
+                new XAttribute("patternType", "solid"),
+                new XElement(XName.Get("fgColor", "http://schemas.openxmlformats.org/spreadsheetml/2006/main"),
+                    new XAttribute("rgb", backgroundColor.ToXLSXColor())),
+                new XElement(XName.Get("bgColor", "http://schemas.openxmlformats.org/spreadsheetml/2006/main"),
+                    new XAttribute("indexed", "64"))));
+
+        styleTracker.FillsElement.Add(fillElement);
+        styleTracker.FillsElement.Attribute("count")!.Value = (styleTracker.FillStyles.Count + 2).ToString(CultureInfo.InvariantCulture);
+    }
+
+    private void CreateCellStyleElement(Format format, int fontId, int fillId, int borderId, int numFmtId, bool quotePrefix, StyleTracker styleTracker)
+    {
+        var xfElement = new XElement(XName.Get("xf", "http://schemas.openxmlformats.org/spreadsheetml/2006/main"),
+            new XAttribute("numFmtId", numFmtId.ToString(CultureInfo.InvariantCulture)),
+            new XAttribute("fontId", fontId.ToString(CultureInfo.InvariantCulture)),
+            new XAttribute("fillId", fillId.ToString(CultureInfo.InvariantCulture)),
+            new XAttribute("borderId", borderId.ToString(CultureInfo.InvariantCulture)),
+            new XAttribute("xfId", "0"),
+            new XAttribute("applyFont", fontId > 0 ? "1" : "0"),
+            new XAttribute("applyFill", fillId > 0 ? "1" : "0"),
+            new XAttribute("applyNumberFormat", numFmtId > 0 ? "1" : "0"),
+            new XAttribute("applyBorder", borderId > 0 ? "1" : "0"));
+
+        if (format.TextAlign is not null || format.VerticalAlign is not null || format.WrapText)
+        {
+            var alignmentElement = CreateAlignmentElement(format);
+            xfElement.Add(alignmentElement);
+            xfElement.Add(new XAttribute("applyAlignment", "1"));
+        }
+
+        if (format.Locked is not null || format.FormulaHidden is not null)
+        {
+            var protectionElement = new XElement(XName.Get("protection", "http://schemas.openxmlformats.org/spreadsheetml/2006/main"));
+            if (format.Locked is not null)
+            {
+                protectionElement.Add(new XAttribute("locked", format.Locked.Value ? "1" : "0"));
+            }
+            if (format.FormulaHidden is not null)
+            {
+                protectionElement.Add(new XAttribute("hidden", format.FormulaHidden.Value ? "1" : "0"));
+            }
+            xfElement.Add(protectionElement);
+            xfElement.Add(new XAttribute("applyProtection", "1"));
+        }
+
+        if (quotePrefix)
+        {
+            xfElement.Add(new XAttribute("quotePrefix", "1"));
+        }
+
+        styleTracker.CellXfsElement.Add(xfElement);
+        styleTracker.CellXfsElement.Attribute("count")!.Value = (styleTracker.CellStyles.Count + 1).ToString(CultureInfo.InvariantCulture);
+    }
+
+    private static XElement CreateAlignmentElement(Format format)
+    {
+        var alignmentElement = new XElement(XName.Get("alignment", "http://schemas.openxmlformats.org/spreadsheetml/2006/main"));
+
+        if (format.TextAlign is not null)
+        {
+            var horizontalAlign = format.TextAlign switch
+            {
+                TextAlign.Center => "center",
+                TextAlign.Right => "right",
+                TextAlign.Justify => "justify",
+                _ => "left"
+            };
+            alignmentElement.Add(new XAttribute("horizontal", horizontalAlign));
+        }
+
+        if (format.VerticalAlign is not null)
+        {
+            var verticalAlign = format.VerticalAlign switch
+            {
+                VerticalAlign.Middle => "center",
+                VerticalAlign.Bottom => "bottom",
+                _ => "top"
+            };
+            alignmentElement.Add(new XAttribute("vertical", verticalAlign));
+        }
+
+        if (format.WrapText)
+        {
+            alignmentElement.Add(new XAttribute("wrapText", "1"));
+        }
+
+        return alignmentElement;
+    }
+
+    private static string FormatValueInvariant(object? value)
+    {
+        if (value is null)
+        {
+            return string.Empty;
+        }
+
+        return value switch
+        {
+            double d => d.ToString(CultureInfo.InvariantCulture),
+            float f => f.ToString(CultureInfo.InvariantCulture),
+            decimal m => m.ToString(CultureInfo.InvariantCulture),
+            IFormattable fmt => fmt.ToString(null, CultureInfo.InvariantCulture),
+            _ => value.ToString() ?? string.Empty
+        };
+    }
+
+    private const string Main = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
+
+    private static string CellErrorToString(CellError error) => error switch
+    {
+        CellError.Value => "#VALUE!",
+        CellError.Div0  => "#DIV/0!",
+        CellError.Ref   => "#REF!",
+        CellError.Name  => "#NAME?",
+        CellError.Num   => "#NUM!",
+        CellError.NA    => "#N/A",
+        _               => "#NAME?",
+    };
+
+    private static void AddMergedCells(Worksheet sheet, XDocument sheetDoc)
+    {
+        if (sheet.MergedCells.Ranges.Count > 0)
+        {
+            var mergeCells = new XElement(XName.Get("mergeCells", "http://schemas.openxmlformats.org/spreadsheetml/2006/main"),
+                new XAttribute("count", sheet.MergedCells.Ranges.Count));
+
+            foreach (var range in sheet.MergedCells.Ranges)
+            {
+                mergeCells.Add(new XElement(XName.Get("mergeCell", "http://schemas.openxmlformats.org/spreadsheetml/2006/main"),
+                    new XAttribute("ref", range.ToString())));
+            }
+
+            sheetDoc.Root!.Add(mergeCells);
+        }
+    }
+
+    private static void AddAutoFilter(Worksheet sheet, XDocument sheetDoc)
+    {
+        if (sheet.AutoFilter.Range is not null)
+        {
+            var uid = Guid.NewGuid().ToString("B").ToUpperInvariant();
+            var autoFilter = new XElement(XName.Get("autoFilter", "http://schemas.openxmlformats.org/spreadsheetml/2006/main"),
+                new XAttribute("ref", sheet.AutoFilter.Range.Value.ToString()),
+                new XAttribute(XName.Get("uid", "http://schemas.microsoft.com/office/spreadsheetml/2014/revision"), uid));
+
+            foreach (var filter in sheet.Filters)
+            {
+                var filterColumn = CreateFilterColumn(filter, sheet.AutoFilter.Range.Value);
+                if (filterColumn is not null)
+                {
+                    autoFilter.Add(filterColumn);
+                }
+            }
+
+            sheetDoc.Root!.Add(autoFilter);
+        }
+    }
+
+    private static void AddConditionalFormatting(Worksheet sheet, XDocument sheetDoc, StyleTracker styleTracker)
+    {
+        var ns = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
+
+        var entries = new List<(RangeRef Range, ConditionalFormatBase Rule)>();
+        foreach (var range in sheet.ConditionalFormats.Ranges)
+        {
+            foreach (var rule in sheet.ConditionalFormats.GetRules(range))
+            {
+                if (GetConditionalFormat(rule) is not null)
+                {
+                    entries.Add((range, rule));
+                }
+            }
+        }
+
+        if (entries.Count == 0)
+        {
+            return;
+        }
+
+        // ConditionalFormatStore.Calculate lets later rules override earlier ones, while ECMA-376
+        // §18.3.1.10 gives precedence to the lowest priority number, so priorities are assigned in
+        // reverse add order and stopIfTrue is omitted.
+        XElement? currentElement = null;
+        RangeRef? currentRange = null;
+
+        for (var i = 0; i < entries.Count; i++)
+        {
+            var (range, rule) = entries[i];
+            var priority = entries.Count - i;
+            var dxfId = AddDxf(styleTracker, GetConditionalFormat(rule)!);
+
+            if (currentRange is null || !currentRange.Value.Equals(range))
+            {
+                currentElement = new XElement(XName.Get("conditionalFormatting", ns),
+                    new XAttribute("sqref", range.ToString()));
+                sheetDoc.Root!.Add(currentElement);
+                currentRange = range;
+            }
+
+            currentElement!.Add(CreateCfRule(rule, range, priority, dxfId, ns));
+        }
+    }
+
+    private static Format? GetConditionalFormat(ConditionalFormatBase rule) => rule switch
+    {
+        GreaterThanRule r => r.Format,
+        LessThanRule r => r.Format,
+        BetweenRule r => r.Format,
+        EqualToRule r => r.Format,
+        TextContainsRule r => r.Format,
+        Top10Rule r => r.Format,
+        _ => null
+    };
+
+    private static XElement CreateCfRule(ConditionalFormatBase rule, RangeRef range, int priority, int dxfId, string ns)
+    {
+        var element = new XElement(XName.Get("cfRule", ns),
+            new XAttribute("type", rule switch
+            {
+                TextContainsRule => "containsText",
+                Top10Rule => "top10",
+                _ => "cellIs"
+            }),
+            new XAttribute("dxfId", dxfId.ToString(CultureInfo.InvariantCulture)),
+            new XAttribute("priority", priority.ToString(CultureInfo.InvariantCulture)));
+
+        switch (rule)
+        {
+            case GreaterThanRule gt:
+                element.Add(new XAttribute("operator", "greaterThan"));
+                element.Add(new XElement(XName.Get("formula", ns), gt.Value.ToString(CultureInfo.InvariantCulture)));
+                break;
+            case LessThanRule lt:
+                element.Add(new XAttribute("operator", "lessThan"));
+                element.Add(new XElement(XName.Get("formula", ns), lt.Value.ToString(CultureInfo.InvariantCulture)));
+                break;
+            case BetweenRule bw:
+                element.Add(new XAttribute("operator", "between"));
+                element.Add(new XElement(XName.Get("formula", ns), bw.Minimum.ToString(CultureInfo.InvariantCulture)));
+                element.Add(new XElement(XName.Get("formula", ns), bw.Maximum.ToString(CultureInfo.InvariantCulture)));
+                break;
+            case EqualToRule eq:
+                element.Add(new XAttribute("operator", "equal"));
+                element.Add(new XElement(XName.Get("formula", ns),
+                    NumericCoercion.TryCoerceToDouble(eq.Value, out var number)
+                        ? number.ToString(CultureInfo.InvariantCulture)
+                        : $"\"{(eq.Value?.ToString() ?? string.Empty).Replace("\"", "\"\"", StringComparison.Ordinal)}\""));
+                break;
+            case TextContainsRule tc:
+                var escaped = tc.Text.Replace("\"", "\"\"", StringComparison.Ordinal);
+                element.Add(new XAttribute("operator", "containsText"));
+                element.Add(new XAttribute("text", tc.Text));
+                element.Add(new XElement(XName.Get("formula", ns),
+                    $"NOT(ISERROR(SEARCH(\"{escaped}\",{range.Start})))"));
+                break;
+            case Top10Rule top:
+                if (top.Bottom)
+                {
+                    element.Add(new XAttribute("bottom", "1"));
+                }
+                element.Add(new XAttribute("rank", top.Count.ToString(CultureInfo.InvariantCulture)));
+                break;
+        }
+
+        return element;
+    }
+
+    private static int AddDxf(StyleTracker styleTracker, Format format)
+    {
+        var ns = XNamespace.Get("http://schemas.openxmlformats.org/spreadsheetml/2006/main");
+        var dxf = new XElement(ns + "dxf");
+
+        var font = new XElement(ns + "font");
+        if (format.Bold)
+        {
+            font.Add(new XElement(ns + "b"));
+        }
+        if (format.Italic)
+        {
+            font.Add(new XElement(ns + "i"));
+        }
+        if (format.Underline)
+        {
+            font.Add(new XElement(ns + "u"));
+        }
+        if (format.Strikethrough)
+        {
+            font.Add(new XElement(ns + "strike"));
+        }
+        if (format.Color is not null)
+        {
+            font.Add(new XElement(ns + "color", new XAttribute("rgb", format.Color.ToXLSXColor())));
+        }
+        if (format.FontFamily is not null)
+        {
+            font.Add(new XElement(ns + "name", new XAttribute("val", format.FontFamily)));
+        }
+        if (format.FontSize is not null)
+        {
+            font.Add(new XElement(ns + "sz", new XAttribute("val", format.FontSize.Value.ToString(CultureInfo.InvariantCulture))));
+        }
+        if (font.HasElements)
+        {
+            dxf.Add(font);
+        }
+
+        if (format.BackgroundColor is not null)
+        {
+            // ECMA-376 §18.8.14: in a dxf a solid fill is expressed via patternFill/bgColor,
+            // unlike a full xf fill which uses patternType="solid" with fgColor.
+            dxf.Add(new XElement(ns + "fill",
+                new XElement(ns + "patternFill",
+                    new XElement(ns + "bgColor", new XAttribute("rgb", format.BackgroundColor.ToXLSXColor())))));
+        }
+
+        var border = new XElement(ns + "border");
+        AddDxfBorderSide(border, ns, "left", format.BorderLeft);
+        AddDxfBorderSide(border, ns, "right", format.BorderRight);
+        AddDxfBorderSide(border, ns, "top", format.BorderTop);
+        AddDxfBorderSide(border, ns, "bottom", format.BorderBottom);
+        if (border.HasElements)
+        {
+            dxf.Add(border);
+        }
+
+        styleTracker.DxfsElement.Add(dxf);
+        var dxfId = styleTracker.DxfsElement.Elements().Count() - 1;
+        styleTracker.DxfsElement.SetAttributeValue("count", (dxfId + 1).ToString(CultureInfo.InvariantCulture));
+        return dxfId;
+    }
+
+    private static void AddDxfBorderSide(XElement border, XNamespace ns, string side, BorderStyle? style)
+    {
+        if (style is null || style.LineStyle == BorderLineStyle.None)
+        {
+            return;
+        }
+
+        border.Add(new XElement(ns + side,
+            new XAttribute("style", style.ToXlsxStyle()),
+            new XElement(ns + "color", new XAttribute("rgb", style.Color.ToXLSXColor()))));
+    }
+
+    private static void AddDataValidations(Worksheet sheet, XDocument sheetDoc)
+    {
+        var ns = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
+        XElement? dataValidationsElement = null;
+
+        foreach (var range in sheet.Validation.Ranges)
+        {
+            foreach (var validator in sheet.Validation.GetValidators(range))
+            {
+                if (validator is DataValidationRule rule)
+                {
+                    dataValidationsElement ??= new XElement(XName.Get("dataValidations", ns));
+
+                    var typeStr = rule.Type switch
+                    {
+                        DataValidationType.WholeNumber => "whole",
+                        DataValidationType.Decimal => "decimal",
+                        DataValidationType.List => "list",
+                        DataValidationType.Date => "date",
+                        DataValidationType.Time => "time",
+                        DataValidationType.TextLength => "textLength",
+                        DataValidationType.Custom => "custom",
+                        _ => "whole"
+                    };
+
+                    var element = new XElement(XName.Get("dataValidation", ns),
+                        new XAttribute("type", typeStr),
+                        new XAttribute("sqref", range.ToString()),
+                        new XAttribute("allowBlank", rule.AllowBlank ? "1" : "0"));
+
+                    if (rule.Type != DataValidationType.List)
+                    {
+                        var operatorStr = rule.Operator switch
+                        {
+                            DataValidationOperator.Between => "between",
+                            DataValidationOperator.NotBetween => "notBetween",
+                            DataValidationOperator.Equal => "equal",
+                            DataValidationOperator.NotEqual => "notEqual",
+                            DataValidationOperator.GreaterThan => "greaterThan",
+                            DataValidationOperator.LessThan => "lessThan",
+                            DataValidationOperator.GreaterThanOrEqual => "greaterThanOrEqual",
+                            DataValidationOperator.LessThanOrEqual => "lessThanOrEqual",
+                            _ => "between"
+                        };
+                        element.Add(new XAttribute("operator", operatorStr));
+                    }
+
+                    if (rule.ShowErrorMessage)
+                    {
+                        element.Add(new XAttribute("showErrorMessage", "1"));
+                    }
+
+                    if (rule.ShowInputMessage)
+                    {
+                        element.Add(new XAttribute("showInputMessage", "1"));
+                    }
+
+                    if (!string.IsNullOrEmpty(rule.ErrorTitle))
+                    {
+                        element.Add(new XAttribute("errorTitle", rule.ErrorTitle));
+                    }
+
+                    if (!string.IsNullOrEmpty(rule.Error))
+                    {
+                        element.Add(new XAttribute("error", rule.Error));
+                    }
+
+                    if (!string.IsNullOrEmpty(rule.InputTitle))
+                    {
+                        element.Add(new XAttribute("promptTitle", rule.InputTitle));
+                    }
+
+                    if (!string.IsNullOrEmpty(rule.InputMessage))
+                    {
+                        element.Add(new XAttribute("prompt", rule.InputMessage));
+                    }
+
+                    var errorStyleStr = rule.ErrorStyle switch
+                    {
+                        DataValidationErrorStyle.Warning => "warning",
+                        DataValidationErrorStyle.Information => "information",
+                        _ => (string?)null // "stop" is the default, omit it
+                    };
+
+                    if (errorStyleStr is not null)
+                    {
+                        element.Add(new XAttribute("errorStyle", errorStyleStr));
+                    }
+
+                    if (!string.IsNullOrEmpty(rule.Formula1))
+                    {
+                        if (rule.Type == DataValidationType.List)
+                        {
+                            // Excel format: each item quoted individually, e.g. "Yes","No","Maybe"
+                            var items = rule.Formula1.Split(',');
+                            var quoted = string.Join(",", items.Select(i => $"\"{i.Trim()}\""));
+                            element.Add(new XElement(XName.Get("formula1", ns), quoted));
+                        }
+                        else
+                        {
+                            element.Add(new XElement(XName.Get("formula1", ns), rule.Formula1));
+                        }
+                    }
+
+                    if (!string.IsNullOrEmpty(rule.Formula2))
+                    {
+                        element.Add(new XElement(XName.Get("formula2", ns), rule.Formula2));
+                    }
+
+                    dataValidationsElement.Add(element);
+                }
+            }
+        }
+
+        if (dataValidationsElement is not null)
+        {
+            var count = dataValidationsElement.Elements().Count();
+            dataValidationsElement.Add(new XAttribute("count", count.ToString(CultureInfo.InvariantCulture)));
+            sheetDoc.Root!.Add(dataValidationsElement);
+        }
+    }
+
+    private static XElement? CreateFilterColumn(SheetFilter filter, RangeRef autoFilterRange)
+    {
+        XNamespace ns = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
+
+        // New criterion types know their own column directly.
+        if (filter.Criterion is TopFilterCriterion topCriterion)
+        {
+            var colId = topCriterion.Column - autoFilterRange.Start.Column;
+            if (colId < 0 || colId > autoFilterRange.End.Column - autoFilterRange.Start.Column)
+            {
+                return null;
+            }
+
+            return new XElement(ns + "filterColumn",
+                new XAttribute("colId", colId),
+                new XElement(ns + "top10",
+                    new XAttribute("val", topCriterion.Count.ToString(CultureInfo.InvariantCulture)),
+                    new XAttribute("top", topCriterion.Bottom ? "0" : "1"),
+                    new XAttribute("percent", topCriterion.Percent ? "1" : "0")));
+        }
+
+        if (filter.Criterion is DynamicFilterCriterion dynCriterion)
+        {
+            var colId = dynCriterion.Column - autoFilterRange.Start.Column;
+            if (colId < 0 || colId > autoFilterRange.End.Column - autoFilterRange.Start.Column)
+            {
+                return null;
+            }
+
+            return new XElement(ns + "filterColumn",
+                new XAttribute("colId", colId),
+                new XElement(ns + "dynamicFilter",
+                    new XAttribute("type", DynamicFilterTypeToXml(dynCriterion.Type))));
+        }
+
+        if (filter.Criterion is CellColorFilterCriterion colorCriterion)
+        {
+            var colId = colorCriterion.Column - autoFilterRange.Start.Column;
+            if (colId < 0 || colId > autoFilterRange.End.Column - autoFilterRange.Start.Column)
+            {
+                return null;
+            }
+            // Color filters in OOXML reference a dxfId in styles.xml's <dxfs> block.
+            // We don't yet write dxfs, so encode the color + kind in a custom data attribute
+            // we recognize on read. Excel itself ignores unknown attributes and falls back to
+            // showing all rows, which is acceptable until we wire dxfs.
+            return new XElement(ns + "filterColumn",
+                new XAttribute("colId", colId),
+                new XElement(ns + "colorFilter",
+                    new XAttribute("dxfId", "0"),
+                    new XAttribute("cellColor", colorCriterion.FontColor ? "0" : "1"),
+                    new XAttribute(XNamespace.Get("urn:schemas-radzen:spreadsheet") + "color",
+                        colorCriterion.Color ?? "")));
+        }
+
+        if (filter.Criterion is FilterCriterionLeaf leaf)
+        {
+            var colId = leaf.Column - autoFilterRange.Start.Column;
+            if (colId >= 0 && colId <= autoFilterRange.End.Column - autoFilterRange.Start.Column)
+            {
+                return new XElement(XName.Get("filterColumn", "http://schemas.openxmlformats.org/spreadsheetml/2006/main"),
+                    new XAttribute("colId", colId),
+                    SerializeFilterCriterion(filter.Criterion, colId));
+            }
+        }
+        else if (filter.Criterion is OrCriterion orCriterion)
+        {
+            var firstLeaf = orCriterion.Criteria.OfType<FilterCriterionLeaf>().FirstOrDefault();
+            if (firstLeaf is not null)
+            {
+                var colId = firstLeaf.Column - autoFilterRange.Start.Column;
+                if (colId >= 0 && colId <= autoFilterRange.End.Column - autoFilterRange.Start.Column)
+                {
+                    return new XElement(XName.Get("filterColumn", "http://schemas.openxmlformats.org/spreadsheetml/2006/main"),
+                        new XAttribute("colId", colId),
+                        SerializeFilterCriterion(filter.Criterion, colId));
+                }
+            }
+        }
+        else if (filter.Criterion is AndCriterion andCriterion)
+        {
+            var firstLeaf = andCriterion.Criteria.OfType<FilterCriterionLeaf>().FirstOrDefault();
+            if (firstLeaf is not null)
+            {
+                var colId = firstLeaf.Column - autoFilterRange.Start.Column;
+                if (colId >= 0 && colId <= autoFilterRange.End.Column - autoFilterRange.Start.Column)
+                {
+                    return new XElement(XName.Get("filterColumn", "http://schemas.openxmlformats.org/spreadsheetml/2006/main"),
+                        new XAttribute("colId", colId),
+                        SerializeFilterCriterion(filter.Criterion, colId));
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private static XElement SerializeFilterCriterion(FilterCriterion criterion, int columnIndex)
+    {
+        return criterion switch
+        {
+            OrCriterion orCriterion => new XElement(XName.Get("customFilters", "http://schemas.openxmlformats.org/spreadsheetml/2006/main"),
+                orCriterion.Criteria.Select(c => SerializeCustomFilter(c))),
+
+            AndCriterion andCriterion => new XElement(XName.Get("customFilters", "http://schemas.openxmlformats.org/spreadsheetml/2006/main"),
+                new XAttribute("and", "1"),
+                andCriterion.Criteria.Select(c => SerializeCustomFilter(c))),
+
+            InListCriterion inListCriterion => new XElement(XName.Get("filters", "http://schemas.openxmlformats.org/spreadsheetml/2006/main"),
+                inListCriterion.Values.Select(v => new XElement(XName.Get("filter", "http://schemas.openxmlformats.org/spreadsheetml/2006/main"),
+                    new XAttribute("val", v?.ToString() ?? "")))),
+
+            _ => new XElement(XName.Get("customFilters", "http://schemas.openxmlformats.org/spreadsheetml/2006/main"),
+                SerializeCustomFilter(criterion))
+        };
+    }
+
+    private static XElement SerializeCustomFilter(FilterCriterion criterion)
+    {
+        var (operatorName, value) = criterion switch
+        {
+            EqualToCriterion equalCriterion => ("equal", equalCriterion.Value?.ToString() ?? ""),
+            NotEqualToCriterion notEqualCriterion => ("notEqual", notEqualCriterion.Value?.ToString() ?? ""),
+            GreaterThanCriterion greaterCriterion => ("greaterThan", greaterCriterion.Value?.ToString() ?? ""),
+            LessThanCriterion lessCriterion => ("lessThan", lessCriterion.Value?.ToString() ?? ""),
+            GreaterThanOrEqualCriterion greaterEqualCriterion => ("greaterThanOrEqual", greaterEqualCriterion.Value?.ToString() ?? ""),
+            LessThanOrEqualCriterion lessEqualCriterion => ("lessThanOrEqual", lessEqualCriterion.Value?.ToString() ?? ""),
+            StartsWithCriterion startsWithCriterion => ("beginsWith", startsWithCriterion.Value?.ToString() ?? ""),
+            DoesNotStartWithCriterion doesNotStartWithCriterion => ("notBeginsWith", doesNotStartWithCriterion.Value?.ToString() ?? ""),
+            EndsWithCriterion endsWithCriterion => ("endsWith", endsWithCriterion.Value?.ToString() ?? ""),
+            DoesNotEndWithCriterion doesNotEndWithCriterion => ("notEndsWith", doesNotEndWithCriterion.Value?.ToString() ?? ""),
+            ContainsCriterion containsCriterion => ("contains", containsCriterion.Value?.ToString() ?? ""),
+            DoesNotContainCriterion doesNotContainCriterion => ("notContains", doesNotContainCriterion.Value?.ToString() ?? ""),
+            IsNullCriterion => ("equal", ""),
+            InListCriterion inListCriterion => throw new NotSupportedException("InListCriterion must be converted to OrCriterion before serialization"),
+            _ => throw new NotSupportedException($"Filter criterion type {criterion.GetType().Name} is not supported for serialization.")
+        };
+
+        return new XElement(XName.Get("customFilter", "http://schemas.openxmlformats.org/spreadsheetml/2006/main"),
+            new XAttribute("operator", operatorName),
+            new XAttribute("val", value));
+    }
+
+    private static string DynamicFilterTypeToXml(DynamicFilterType type) => type switch
+    {
+        DynamicFilterType.AboveAverage => "aboveAverage",
+        DynamicFilterType.BelowAverage => "belowAverage",
+        DynamicFilterType.Today => "today",
+        DynamicFilterType.Yesterday => "yesterday",
+        DynamicFilterType.Tomorrow => "tomorrow",
+        DynamicFilterType.ThisWeek => "thisWeek",
+        DynamicFilterType.LastWeek => "lastWeek",
+        DynamicFilterType.NextWeek => "nextWeek",
+        DynamicFilterType.ThisMonth => "thisMonth",
+        DynamicFilterType.LastMonth => "lastMonth",
+        DynamicFilterType.NextMonth => "nextMonth",
+        DynamicFilterType.ThisQuarter => "thisQuarter",
+        DynamicFilterType.LastQuarter => "lastQuarter",
+        DynamicFilterType.NextQuarter => "nextQuarter",
+        DynamicFilterType.ThisYear => "thisYear",
+        DynamicFilterType.LastYear => "lastYear",
+        DynamicFilterType.NextYear => "nextYear",
+        DynamicFilterType.YearToDate => "yearToDate",
+        DynamicFilterType.January => "M1",
+        DynamicFilterType.February => "M2",
+        DynamicFilterType.March => "M3",
+        DynamicFilterType.April => "M4",
+        DynamicFilterType.May => "M5",
+        DynamicFilterType.June => "M6",
+        DynamicFilterType.July => "M7",
+        DynamicFilterType.August => "M8",
+        DynamicFilterType.September => "M9",
+        DynamicFilterType.October => "M10",
+        DynamicFilterType.November => "M11",
+        DynamicFilterType.December => "M12",
+        DynamicFilterType.Quarter1 => "Q1",
+        DynamicFilterType.Quarter2 => "Q2",
+        DynamicFilterType.Quarter3 => "Q3",
+        DynamicFilterType.Quarter4 => "Q4",
+        _ => "today",
+    };
+
+    internal static DynamicFilterType DynamicFilterTypeFromXml(string? value) => value switch
+    {
+        "aboveAverage" => DynamicFilterType.AboveAverage,
+        "belowAverage" => DynamicFilterType.BelowAverage,
+        "today" => DynamicFilterType.Today,
+        "yesterday" => DynamicFilterType.Yesterday,
+        "tomorrow" => DynamicFilterType.Tomorrow,
+        "thisWeek" => DynamicFilterType.ThisWeek,
+        "lastWeek" => DynamicFilterType.LastWeek,
+        "nextWeek" => DynamicFilterType.NextWeek,
+        "thisMonth" => DynamicFilterType.ThisMonth,
+        "lastMonth" => DynamicFilterType.LastMonth,
+        "nextMonth" => DynamicFilterType.NextMonth,
+        "thisQuarter" => DynamicFilterType.ThisQuarter,
+        "lastQuarter" => DynamicFilterType.LastQuarter,
+        "nextQuarter" => DynamicFilterType.NextQuarter,
+        "thisYear" => DynamicFilterType.ThisYear,
+        "lastYear" => DynamicFilterType.LastYear,
+        "nextYear" => DynamicFilterType.NextYear,
+        "yearToDate" => DynamicFilterType.YearToDate,
+        "M1" => DynamicFilterType.January,
+        "M2" => DynamicFilterType.February,
+        "M3" => DynamicFilterType.March,
+        "M4" => DynamicFilterType.April,
+        "M5" => DynamicFilterType.May,
+        "M6" => DynamicFilterType.June,
+        "M7" => DynamicFilterType.July,
+        "M8" => DynamicFilterType.August,
+        "M9" => DynamicFilterType.September,
+        "M10" => DynamicFilterType.October,
+        "M11" => DynamicFilterType.November,
+        "M12" => DynamicFilterType.December,
+        "Q1" => DynamicFilterType.Quarter1,
+        "Q2" => DynamicFilterType.Quarter2,
+        "Q3" => DynamicFilterType.Quarter3,
+        "Q4" => DynamicFilterType.Quarter4,
+        _ => DynamicFilterType.Today,
+    };
+
+    private static void SaveSharedStrings(ZipArchive archive, SharedStringTable sharedStrings)
+    {
+        if (sharedStrings.Count == 0)
+        {
+            // No string cells in the workbook; skip the part entirely. Its
+            // relationship and Content_Types Override are also omitted.
+            return;
+        }
+
+        var count = sharedStrings.Count.ToString(CultureInfo.InvariantCulture);
+
+        using var entry = archive.CreateEntry("xl/sharedStrings.xml").Open();
+        using var writer = XmlWriter.Create(entry, PartXmlSettings);
+
+        writer.WriteStartDocument();
+        writer.WriteStartElement("sst", Main);
+        writer.WriteAttributeString("count", count);
+        writer.WriteAttributeString("uniqueCount", count);
+
+        foreach (var text in sharedStrings.Strings)
+        {
+            writer.WriteStartElement("si", Main);
+            WriteStringText(writer, text);
+            writer.WriteEndElement();
+        }
+
+        writer.WriteEndElement();
+        writer.WriteEndDocument();
+    }
+
+    private void SaveWorkbook(ZipArchive archive)
+    {
+        XNamespace mainNs = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
+        XNamespace rNs = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+
+        var workbook = new XDocument(
+            new XElement(mainNs + "workbook",
+                new XAttribute(XNamespace.Xmlns + "r", rNs.NamespaceName),
+                new XElement(mainNs + "fileVersion",
+                    new XAttribute("appName", "xl"),
+                    new XAttribute("lastEdited", "7"),
+                    new XAttribute("lowestEdited", "7"),
+                    new XAttribute("rupBuild", "27932")),
+                new XElement(mainNs + "workbookPr",
+                    new XAttribute("defaultThemeVersion", "202300")),
+                new XElement(mainNs + "bookViews",
+                    new XElement(mainNs + "workbookView",
+                        new XAttribute("xWindow", "0"),
+                        new XAttribute("yWindow", "0"),
+                        new XAttribute("windowWidth", "20000"),
+                        new XAttribute("windowHeight", "12000"))),
+                new XElement(mainNs + "sheets"),
+                new XElement(mainNs + "calcPr",
+                    new XAttribute("calcId", "0"))));
+
+        var sheetsElement = workbook.Root!.Element(mainNs + "sheets")!;
+
+        for (var i = 0; i < sheets.Count; i++)
+        {
+            var sheet = sheets[i];
+            var sheetId = i + 1;
+            var relId = $"rId{sheetId + 2}";
+
+            sheetsElement.Add(new XElement(XName.Get("sheet", "http://schemas.openxmlformats.org/spreadsheetml/2006/main"),
+                new XAttribute("name", sheet.Name),
+                new XAttribute("sheetId", sheetId),
+                new XAttribute(XName.Get("id", "http://schemas.openxmlformats.org/officeDocument/2006/relationships"), relId)));
+        }
+
+        var wp = sourceWorkbook.Protection;
+        if (wp.LockStructure || wp.PasswordHash is not null || wp.HashValue is not null)
+        {
+            var ns = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
+            var wpElement = new XElement(XName.Get("workbookProtection", ns));
+            if (wp.LockStructure)
+            {
+                wpElement.Add(new XAttribute("lockStructure", "1"));
+            }
+
+            if (wp.PasswordHash is not null)
+            {
+                wpElement.Add(new XAttribute("workbookPassword", wp.PasswordHash));
+            }
+
+            if (wp.AlgorithmName is not null)
+            {
+                wpElement.Add(new XAttribute("workbookAlgorithmName", wp.AlgorithmName));
+            }
+
+            if (wp.HashValue is not null)
+            {
+                wpElement.Add(new XAttribute("workbookHashValue", wp.HashValue));
+            }
+
+            if (wp.SaltValue is not null)
+            {
+                wpElement.Add(new XAttribute("workbookSaltValue", wp.SaltValue));
+            }
+
+            if (wp.SpinCount is not null)
+            {
+                wpElement.Add(new XAttribute("workbookSpinCount", wp.SpinCount.Value.ToString(CultureInfo.InvariantCulture)));
+            }
+
+            sheetsElement.AddBeforeSelf(wpElement);
+        }
+
+        // ECMA-376 part 1, 18.2.6 (definedNames)
+        if (sourceWorkbook.DefinedNames.Count > 0)
+        {
+            var definedNames = new XElement(mainNs + "definedNames");
+
+            foreach (var definedName in sourceWorkbook.DefinedNames)
+            {
+                definedNames.Add(new XElement(mainNs + "definedName", new XAttribute("name", definedName.Key), definedName.Value));
+            }
+
+            sheetsElement.AddAfterSelf(definedNames);
+        }
+
+        using var entry = archive.CreateEntry("xl/workbook.xml").Open();
+        workbook.Save(entry);
+    }
+
+    private static void AddSheetProtection(Worksheet sheet, XDocument sheetDoc)
+    {
+        var p = sheet.Protection;
+        if (!p.IsProtected && p.PasswordHash is null && p.HashValue is null)
+        {
+            return;
+        }
+
+        var ns = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
+        var element = new XElement(XName.Get("sheetProtection", ns));
+
+        if (p.IsProtected)
+        {
+            element.Add(new XAttribute("sheet", "1"));
+        }
+
+        // XLSX: attribute absent or "1" = forbidden; write "0" to allow
+        if (p.AllowFormatCells)
+        {
+            element.Add(new XAttribute("formatCells", "0"));
+        }
+
+        if (p.AllowFormatRows)
+        {
+            element.Add(new XAttribute("formatRows", "0"));
+        }
+
+        if (p.AllowFormatColumns)
+        {
+            element.Add(new XAttribute("formatColumns", "0"));
+        }
+
+        if (p.AllowInsertColumns)
+        {
+            element.Add(new XAttribute("insertColumns", "0"));
+        }
+
+        if (p.AllowInsertRows)
+        {
+            element.Add(new XAttribute("insertRows", "0"));
+        }
+
+        if (p.AllowInsertHyperlinks)
+        {
+            element.Add(new XAttribute("insertHyperlinks", "0"));
+        }
+
+        if (p.AllowDeleteColumns)
+        {
+            element.Add(new XAttribute("deleteColumns", "0"));
+        }
+
+        if (p.AllowDeleteRows)
+        {
+            element.Add(new XAttribute("deleteRows", "0"));
+        }
+
+        if (p.AllowSort)
+        {
+            element.Add(new XAttribute("sort", "0"));
+        }
+
+        if (p.AllowAutoFilter)
+        {
+            element.Add(new XAttribute("autoFilter", "0"));
+        }
+
+        // selectLockedCells/selectUnlockedCells: write "1" if forbidden
+        if (!p.AllowSelectLockedCells)
+        {
+            element.Add(new XAttribute("selectLockedCells", "1"));
+        }
+
+        if (!p.AllowSelectUnlockedCells)
+        {
+            element.Add(new XAttribute("selectUnlockedCells", "1"));
+        }
+
+        if (p.PasswordHash is not null)
+        {
+            element.Add(new XAttribute("password", p.PasswordHash));
+        }
+
+        if (p.AlgorithmName is not null)
+        {
+            element.Add(new XAttribute("algorithmName", p.AlgorithmName));
+        }
+
+        if (p.HashValue is not null)
+        {
+            element.Add(new XAttribute("hashValue", p.HashValue));
+        }
+
+        if (p.SaltValue is not null)
+        {
+            element.Add(new XAttribute("saltValue", p.SaltValue));
+        }
+
+        if (p.SpinCount is not null)
+        {
+            element.Add(new XAttribute("spinCount", p.SpinCount.Value.ToString(CultureInfo.InvariantCulture)));
+        }
+
+        // Insert after sheetData per ECMA-376 element order
+        var sheetData = sheetDoc.Root!.Element(XName.Get("sheetData", ns));
+        sheetData!.AddAfterSelf(element);
+    }
+}

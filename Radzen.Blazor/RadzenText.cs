@@ -86,30 +86,54 @@ namespace Radzen.Blazor
         Auto
     }
     /// <summary>
-    /// A component which displays text or makup with predefined styling.
+    /// A text display component with predefined typography styles matching Material Design text hierarchy.
+    /// RadzenText provides consistent text formatting for headings, subtitles, body text, captions, and more with semantic HTML tags.
+    /// Simplifies typography by providing preset styles that match your theme's design system, allowing consistent, professionally designed text formatting without managing CSS classes manually.
+    /// Supports text styles (Display headings H1-H6, subtitles, body text, captions, button text, overlines), automatically uses appropriate HTML tags (h1-h6, p, span) based on style,
+    /// manual HTML tag specification via TagName property, built-in text alignment (left, right, center, justify), and optional anchor links for heading navigation.
+    /// TextStyle.DisplayH1-H6 provide large display headings, TextStyle.H1-H6 provide standard headings, Subtitle1/2 for subtitles, Body1/2 for paragraphs, Caption for small text, and Overline for labels.
     /// </summary>
     /// <example>
-    ///   <code>
-    /// &lt;RadzenText TextStyle="TextStyle.H1"&gt;
-    ///  Hello World
+    /// Heading text:
+    /// <code>
+    /// &lt;RadzenText TextStyle="TextStyle.H3"&gt;Welcome to Our Application&lt;/RadzenText&gt;
+    /// </code>
+    /// Subtitle with alignment:
+    /// <code>
+    /// &lt;RadzenText TextStyle="TextStyle.Subtitle1" TextAlign="TextAlign.Center"&gt;
+    ///     This is a centered subtitle
     /// &lt;/RadzenText&gt;
-    ///   </code>
+    /// </code>
+    /// Body text with custom tag:
+    /// <code>
+    /// &lt;RadzenText TextStyle="TextStyle.Body1" TagName="TagName.Div"&gt;
+    ///     This is body text rendered as a div element.
+    /// &lt;/RadzenText&gt;
+    /// </code>
     /// </example>
     public class RadzenText : RadzenComponent
     {
         class RadzenTextAnchor : ComponentBase, IDisposable
         {
             [Inject]
-            NavigationManager NavigationManager { get; set; }
+            NavigationManager? NavigationManager { get; set; }
 
             [Inject]
-            IJSRuntime JSRuntime { get; set; }
+            IJSRuntime? JSRuntime { get; set; }
 
             [Parameter]
-            public string Path { get; set; }
+            public string? Path { get; set; }
+
+            [Parameter]
+            public string? AriaLabel { get; set; }
 
             private string GetAnchor()
             {
+                if (string.IsNullOrEmpty(Path))
+                {
+                    return "";
+                }
+
                 var fragments = Path.Split('#');
 
                 return fragments.Length > 1 ? fragments[1] : fragments[0];
@@ -119,19 +143,27 @@ namespace Radzen.Blazor
 
             protected override void OnInitialized()
             {
-                NavigationManager.LocationChanged += OnLocationChanged;
+                if (NavigationManager != null)
+                {
+                    NavigationManager.LocationChanged += OnLocationChanged;
+                }
             }
 
-            void OnLocationChanged(object sender, LocationChangedEventArgs e)
+            void OnLocationChanged(object? sender, LocationChangedEventArgs e)
             {
-                if (e.Location.EndsWith(GetAnchor(), StringComparison.InvariantCultureIgnoreCase))
+                if (e != null && e.Location.EndsWith(GetAnchor(), StringComparison.InvariantCultureIgnoreCase) && JSRuntime != null)
                 {
-                    JSRuntime.InvokeVoidAsync("Element.prototype.scrollIntoView.call", element);
+                    JSRuntime.InvokeVoid("Element.prototype.scrollIntoView.call", element);
                 }
             }
 
             private string GetPath()
             {
+                if (NavigationManager == null)
+                {
+                    return "";
+                }
+
                 var uri = new Uri(NavigationManager.Uri);
 
                 var anchor = GetAnchor();
@@ -141,64 +173,102 @@ namespace Radzen.Blazor
 
             protected override void BuildRenderTree(RenderTreeBuilder builder)
             {
+                ArgumentNullException.ThrowIfNull(builder);
                 builder.OpenElement(1, "a");
                 builder.AddAttribute(2, "id", GetAnchor());
                 builder.AddAttribute(3, "href", GetPath());
                 builder.AddAttribute(4, "class", "rz-link");
-                builder.AddAttribute(5, "target", "_top"); // To support relative links without the Blazor router interfering
                 builder.AddElementReferenceCapture(6, capture => element = capture);
                 builder.OpenComponent<RadzenIcon>(7);
                 builder.AddAttribute(8, "Icon", "link");
                 builder.CloseComponent();
+                builder.OpenElement(9, "span");
+                builder.AddAttribute(10, "class", "rz-sr-only");
+                builder.AddContent(11, AriaLabel);
+                builder.CloseElement();
 
                 builder.CloseElement();
             }
 
             void IDisposable.Dispose()
             {
-                NavigationManager.LocationChanged -= OnLocationChanged;
+                if (NavigationManager != null)
+                {
+                    NavigationManager.LocationChanged -= OnLocationChanged;
+                }
             }
         }
 
         /// <summary>
-        /// The text that will be displayed.
+        /// Gets or sets the plain text content to display.
+        /// For simple text display, use this property. For rich content with markup, use <see cref="ChildContent"/> instead.
+        /// When set, takes precedence over ChildContent.
         /// </summary>
+        /// <value>The text content to display.</value>
         [Parameter]
-        public string Text { get; set; }
+        public string? Text { get; set; }
 
         /// <summary>
-        /// The child content (markup) that will be displayed. Setting the <see cref="Text"/> property will override it.
+        /// Gets or sets the child content (markup) to display.
+        /// Use this for rich content with HTML or other Blazor components. Overridden by <see cref="Text"/> if both are set.
         /// </summary>
+        /// <value>The child content render fragment.</value>
         [Parameter]
-        public RenderFragment ChildContent { get; set; }
+        public RenderFragment? ChildContent { get; set; }
 
         /// <summary>
-        /// The style of the text. Set to <see cref="TextStyle.Body1"/> by default.
+        /// Gets or sets the typography style that determines the text size, weight, and appearance.
+        /// Options include display headings (DisplayH1-H6), standard headings (H1-H6), subtitles, body text, captions, and more.
+        /// Each style provides consistent formatting matching the theme's design system.
         /// </summary>
+        /// <value>The text style. Default is <see cref="TextStyle.Body1"/>.</value>
         [Parameter]
         public TextStyle TextStyle { get; set; } = TextStyle.Body1;
 
         /// <summary>
-        /// The horozontal alignment of the text.
+        /// Gets or sets the horizontal text alignment within the container.
+        /// Options include Left, Right, Center, Justify, Start, End, and JustifyAll.
         /// </summary>
+        /// <value>The text alignment. Default is <see cref="TextAlign.Left"/>.</value>
         [Parameter]
         public TextAlign TextAlign { get; set;} = TextAlign.Left;
 
         /// <summary>
-        /// The tag name of the element that will be rendered. Set to <see cref="TagName.Auto"/> which uses a default tag name depending on the current <see cref="TextStyle" />.
+        /// Gets or sets the HTML element tag to render.
+        /// When set to Auto (default), the tag is chosen automatically based on <see cref="TextStyle"/>
+        /// (e.g., H1 style uses &lt;h1&gt; tag). Override to use a specific tag regardless of style.
         /// </summary>
+        /// <value>The HTML tag name. Default is <see cref="TagName.Auto"/>.</value>
         [Parameter]
         public TagName TagName { get; set; } = TagName.Auto;
 
         /// <summary>
-        /// Gets or sets the anchor name. If set an additional anchor will be rendered. Clicking on the anchor will scroll the page to the element with the same id.
+        /// Gets or sets an anchor identifier for creating linkable headings.
+        /// When set, adds a clickable link icon next to the text that scrolls to this element when clicked.
+        /// The anchor href will be the current page URL with #anchorname appended.
         /// </summary>
+        /// <value>The anchor identifier for heading links.</value>
         [Parameter]
-        public string Anchor { get; set; }
+        public string? Anchor { get; set; }
+
+        string? anchorAriaLabel;
+
+        /// <summary>
+        /// Gets or sets the visually hidden text of the anchor link rendered when <see cref="Anchor"/> is set.
+        /// Provides an accessible name for the anchor link. Localizable via the <c>Text_AnchorAriaLabel</c> resource key.
+        /// </summary>
+        /// <value>The anchor link label. Default is <c>"Link to this section"</c>.</value>
+        [Parameter]
+        public string AnchorAriaLabel
+        {
+            get => anchorAriaLabel ?? Localize(nameof(RadzenStrings.Text_AnchorAriaLabel));
+            set => anchorAriaLabel = value;
+        }
 
         /// <inheritdoc />
         protected override void BuildRenderTree(RenderTreeBuilder builder)
         {
+            ArgumentNullException.ThrowIfNull(builder);
             var tagName = "span";
             var className = "";
             var alignClassName = "";
@@ -348,16 +418,17 @@ namespace Radzen.Blazor
                     break;
             }
 
-            var classList = ClassList.Create(className)
-                                     .Add(Attributes)
-                                     .Add(alignClassName, TextAlign != TextAlign.Left);
+            var @class = ClassList.Create(className)
+                                  .Add(Attributes)
+                                  .Add(alignClassName, TextAlign != TextAlign.Left)
+                                  .ToString();
 
             if (Visible)
             {
                 builder.OpenElement(0, tagName);
                 builder.AddAttribute(1, "style", Style);
                 builder.AddMultipleAttributes(2, Attributes);
-                builder.AddAttribute(3, "class", classList.ToString());
+                builder.AddAttribute(3, "class", @class);
                 builder.AddAttribute(4, "id", GetId());
 
                 if (!string.IsNullOrEmpty(Text))
@@ -373,9 +444,10 @@ namespace Radzen.Blazor
                 {
                     builder.OpenComponent<RadzenTextAnchor>(6);
                     builder.AddAttribute(7, nameof(RadzenTextAnchor.Path), Anchor);
+                    builder.AddAttribute(8, nameof(RadzenTextAnchor.AriaLabel), AnchorAriaLabel);
                     builder.CloseComponent();
                 }
-                builder.AddElementReferenceCapture(8, capture => Element = capture);
+                builder.AddElementReferenceCapture(9, capture => Element = capture);
                 builder.CloseElement();
             }
         }

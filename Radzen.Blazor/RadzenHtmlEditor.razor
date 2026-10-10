@@ -9,7 +9,7 @@
     <div @ref=Element style=@Style @attributes=@Attributes class=@GetCssClass() id=@GetId()>
         @if (ShowToolbar)
         {
-        <div class="rz-html-editor-toolbar">
+        <div class="rz-toolbar rz-html-editor-toolbar">
             <CascadingValue Value=@this>
             @if (ChildContent != null)
             {
@@ -45,6 +45,7 @@
                 <RadzenHtmlEditorLink />
                 <RadzenHtmlEditorUnlink />
                 <RadzenHtmlEditorImage />
+                <RadzenHtmlEditorTableTools />
                 <RadzenHtmlEditorFontName />
                 <RadzenHtmlEditorFontSize />
                 <RadzenHtmlEditorFormatBlock />
@@ -54,7 +55,7 @@
             </CascadingValue>
         </div>
         }
-        <RadzenTextArea @ref=@TextArea spellcheck="false" Visible=@(mode == HtmlEditorMode.Source) class="rz-html-editor-source" Value=@Html Change=@SourceChanged />
+        <RadzenTextArea @ref=@TextArea spellcheck="false" Visible=@(mode == HtmlEditorMode.Source) class="rz-html-editor-source" Value=@Html Change=@SourceChanged Immediate=@Immediate />
         <div hidden="@(mode != HtmlEditorMode.Design)" @ref=@ContentEditable class="rz-html-editor-content" contenteditable=@(!Disabled) @onfocus=@OnFocus @onblur=@OnBlur></div>
     </div>
 }

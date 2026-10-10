@@ -1,4 +1,5 @@
 using System;
+using System.Globalization;
 using System.Linq;
 using System.Collections.Generic;
 
@@ -18,12 +19,18 @@ namespace Radzen.Blazor
                 return String.Empty;
             }
 
-            if (String.IsNullOrEmpty(format))
+            // Normalize negative zero to zero
+            if (value is double d && d == 0)
             {
-                return value.ToString();
+                value = 0.0;
             }
 
-            return string.Format(format, value);
+            if (String.IsNullOrEmpty(format))
+            {
+                return value.ToString() ?? String.Empty;
+            }
+
+            return string.Format(CultureInfo.InvariantCulture, format, value);
         }
 
         public override double Scale(double value, bool padding)
@@ -51,6 +58,30 @@ namespace Radzen.Blazor
             return result;
         }
 
+        private bool ticksFollowStep;
+
+        public override IEnumerable<double> TickValues(int distance)
+        {
+            var (start, end, step) = Ticks(distance);
+
+            if (!ticksFollowStep || step <= 0 || !double.IsFinite(step) || !double.IsFinite(start) || !double.IsFinite(end))
+            {
+                return base.TickValues(distance);
+            }
+
+            return MultiplesOfStep(start, end, step);
+        }
+
+        private static IEnumerable<double> MultiplesOfStep(double start, double end, double step)
+        {
+            var first = (decimal)(Math.Ceiling(Math.Round(start / step, 9)) * step);
+
+            for (var value = first; value <= (decimal)end; value += (decimal)step)
+            {
+                yield return (double)value;
+            }
+        }
+
         protected virtual double CalculateTickCount(int distance)
         {
             return  Math.Max(1, Math.Ceiling(Math.Abs(Output.End - Output.Start) / distance));
@@ -58,53 +89,63 @@ namespace Radzen.Blazor
 
         public override (double Start, double End, double Step) Ticks(int distance)
         {
+            // An unmeasured scale keeps the infinite ScaleRange defaults, which NiceNumber()
+            // below cannot round. Substitute a finite domain first, as the other scales do.
+            if (!double.IsFinite(Input.Start) || !double.IsFinite(Input.End))
+            {
+                Input.Start = 0;
+                Input.End = 2;
+                Step = 1;
+                Round = false;
+            }
+
             var ticks = CalculateTickCount(distance);
             var start = Input.Start;
             var end = Input.End;
 
+
             if (start == end)
             {
-                start = 0;
-                end += NiceNumber(end / ticks, false);
-            }
-
-            if (Round && end < 0)
-            {
-                end = 0;
-                start += NiceNumber(start / ticks, false);
+                if (end < 0)
+                {
+                    start += NiceNumber(end / ticks, false);
+                    end = 0;
+                }
+                else
+                {
+                    start = 0;
+                    end += NiceNumber(end / ticks, false);
+                }
             }
 
             var range = end - start;
 
-            if (Round)
-            {
-                range = NiceNumber(end - start, false);
-            }
-
-            var step = Round ? NiceNumber(range / ticks, true) : Math.Ceiling(range / ticks);
+            var step = Round ? NiceNumber(range / ticks, true) : range / ticks;
 
             if (Step != null)
             {
                 if (Step is IConvertible)
                 {
-                    step = Convert.ToDouble(Step);
+                    step = Convert.ToDouble(Step, CultureInfo.InvariantCulture);
                 }
             }
 
-            if (Round)
+            if (RoundStart != RoundEnd)
+            {
+                ticksFollowStep = true;
+            }
+
+            if (RoundStart)
             {
                 start = Math.Floor(start / step) * step;
+            }
+
+            if (RoundEnd)
+            {
                 end = Math.Ceiling(end / step) * step;
             }
 
-            if (!double.IsFinite(Input.Start) || !double.IsFinite(Input.End))
-            {
-                Input.Start = start = 0;
-                Input.End = end = 2;
-                Step = step = 1;
-                Round = false;
-            }
-
+            // The rounding above can still overflow a finite domain.
             if (!double.IsFinite(start) || !double.IsFinite(end))
             {
                 Input.Start = start = 0;
@@ -115,7 +156,7 @@ namespace Radzen.Blazor
 
             if (step == 0)
             {
-                throw new ArgumentOutOfRangeException("Step must be non-zero");
+                throw new ArgumentOutOfRangeException(nameof(distance), "Step must be non-zero");
             }
 
             return (start, end, Math.Abs(step));

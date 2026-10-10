@@ -1,3 +1,4 @@
+using System;
 using Microsoft.AspNetCore.Components;
 
 namespace Radzen.Blazor
@@ -5,8 +6,9 @@ namespace Radzen.Blazor
     /// <summary>
     /// Class RadzenMarkers.
     /// </summary>
-    public class RadzenMarkers : RadzenChartComponentBase
+    public class RadzenMarkers : RadzenChartComponentBase, IDisposable
     {
+        private IChartSeries? series;
         /// <summary>
         /// Gets or sets whether marker is visible.
         /// </summary>
@@ -19,14 +21,14 @@ namespace Radzen.Blazor
         /// </summary>
         /// <value>The fill.</value>
         [Parameter]
-      public string Fill { get; set; }
+      public string? Fill { get; set; }
 
         /// <summary>
         /// Gets or sets the stroke.
         /// </summary>
         /// <value>The stroke.</value>
         [Parameter]
-      public string Stroke { get; set; }
+      public string? Stroke { get; set; }
 
         /// <summary>
         /// Gets or sets the width of the stroke.
@@ -54,13 +56,27 @@ namespace Radzen.Blazor
         /// </summary>
         /// <value>The series.</value>
         [CascadingParameter]
-      public IChartSeries Series 
+      public IChartSeries? Series
       {
         set
         {
-          value.Markers = this;
+          if (value != null)
+          {
+            value.Markers = this;
+            series = value;
+          }
         }
       }
+
+        /// <inheritdoc />
+        public void Dispose()
+        {
+            if (series != null && series.Markers == this)
+            {
+                series.Markers = new RadzenMarkers();
+                _ = Chart?.Refresh();
+            }
+        }
 
         /// <summary>
         /// Shoulds the refresh chart.

@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using Microsoft.AspNetCore.Components;
 using Radzen.Blazor.Rendering;
 using System;
@@ -10,35 +11,35 @@ namespace Radzen.Blazor
     /// Renders bar series in <see cref="RadzenChart" />.
     /// </summary>
     /// <typeparam name="TItem">The type of the series data item.</typeparam>
-    public partial class RadzenBarSeries<TItem> : CartesianSeries<TItem>, IChartBarSeries
+    public partial class RadzenBarSeries<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.PublicFields)] TItem> : CartesianSeries<TItem>, IChartBarSeries
     {
         /// <summary>
         /// Specifies the fill (background color) of the bar series.
         /// </summary>
         /// <value>The fill.</value>
         [Parameter]
-        public string Fill { get; set; }
+        public string? Fill { get; set; }
 
         /// <summary>
         /// Specifies a list of colors that will be used to set the individual bar backgrounds.
         /// </summary>
         /// <value>The fills.</value>
         [Parameter]
-        public IEnumerable<string> Fills { get; set; }
+        public IEnumerable<string>? Fills { get; set; }
 
         /// <summary>
         /// Specifies the stroke (border color) of the bar series.
         /// </summary>
         /// <value>The stroke.</value>
         [Parameter]
-        public string Stroke { get; set; }
+        public string? Stroke { get; set; }
 
         /// <summary>
         /// Specifies a list of colors that will be used to set the individual bar borders.
         /// </summary>
         /// <value>The strokes.</value>
         [Parameter]
-        public IEnumerable<string> Strokes { get; set; }
+        public IEnumerable<string>? Strokes { get; set; }
 
         /// <summary>
         /// Gets or sets the width of the stroke (border).
@@ -59,28 +60,54 @@ namespace Radzen.Blazor
         /// </summary>
         /// <value>The color range of the fill.</value>
         [Parameter]
-        public IList<SeriesColorRange> FillRange { get; set; }
+        public IList<SeriesColorRange>? FillRange { get; set; }
 
         /// <summary>
         /// Gets or sets the color range of the stroke.
         /// </summary>
         /// <value>The color range of the stroke.</value>
         [Parameter]
-        public IList<SeriesColorRange> StrokeRange { get; set; }
+        public IList<SeriesColorRange>? StrokeRange { get; set; }
+
+        /// <summary>
+        /// Specifies how the series is filled. Set to <see cref="FillMode.Solid"/> by default.
+        /// Use <see cref="FillMode.Gradient"/> for a fill that fades toward the axis baseline, or <see cref="FillMode.None"/> to render only the outline.
+        /// </summary>
+        /// <value>The fill mode. Default is <see cref="FillMode.Solid"/>.</value>
+        [Parameter]
+        public FillMode FillMode { get; set; } = FillMode.Solid;
+
+        /// <summary>
+        /// Specifies the opacity at the value end of the gradient fill. Used when <see cref="FillMode"/> is <see cref="FillMode.Gradient"/>.
+        /// </summary>
+        /// <value>The gradient start opacity. Default is <c>0.85</c>.</value>
+        [Parameter]
+        public double GradientStartOpacity { get; set; } = 0.85;
+
+        /// <summary>
+        /// Specifies the opacity at the baseline of the gradient fill. Used when <see cref="FillMode"/> is <see cref="FillMode.Gradient"/>.
+        /// </summary>
+        /// <value>The gradient end opacity. Default is <c>0.4</c>.</value>
+        [Parameter]
+        public double GradientEndOpacity { get; set; } = 0.4;
 
         /// <inheritdoc />
         public override string Color
         {
             get
             {
-                return Fill;
+                return Fill ?? string.Empty;
             }
         }
 
         /// <inheritdoc />
         public override ScaleBase TransformCategoryScale(ScaleBase scale)
         {
-            return base.TransformValueScale(scale);
+            var result = base.TransformValueScale(scale);
+
+            IncludeZeroInValueScale(result, true);
+
+            return result;
         }
 
         /// <inheritdoc />
@@ -99,7 +126,13 @@ namespace Radzen.Blazor
         {
             get
             {
-                return Chart.Series.Where(series => series is IChartBarSeries).Cast<IChartSeries>().ToList();
+                var chart = Chart;
+                if (chart == null)
+                {
+                    return new List<IChartSeries>();
+                }
+
+                return chart.Series.Where(series => series is IChartBarSeries).Cast<IChartSeries>().ToList();
             }
         }
 
@@ -136,14 +169,31 @@ namespace Radzen.Blazor
             get
             {
                 var barSeries = VisibleBarSeries;
-
-                if (Chart.BarOptions.Height.HasValue)
+                if (barSeries.Count == 0)
                 {
-                    return Chart.BarOptions.Height.Value * barSeries.Count;
+                    return 0;
+                }
+
+                var chart = Chart;
+                if (chart == null)
+                {
+                    return 0;
+                }
+
+                var barOptions = chart.BarOptions;
+
+                if (barOptions?.Height.HasValue == true)
+                {
+                    return barOptions.Height.Value * barSeries.Count;
+                }
+                else if (barOptions?.CategoryGap is double gap)
+                {
+                    var step = Math.Abs(chart.ValueScale.Scale(1, true) - chart.ValueScale.Scale(0, true));
+                    return step * (1 - gap);
                 }
                 else
                 {
-                    var availableHeight = Chart.ValueScale.OutputSize; // - (Chart.ValueAxis.Padding * 2);
+                    var availableHeight = chart.ValueScale.OutputSize; // - (Chart.ValueAxis.Padding * 2);
                     var bands = barSeries.Cast<IChartBarSeries>().Max(series => series.Count) + 2;
                     return availableHeight / bands;
                 }
@@ -167,7 +217,13 @@ namespace Radzen.Blazor
         /// <inheritdoc />
         internal override double TooltipX(TItem item)
         {
-            var value = Chart.CategoryScale.Compose(Value);
+            var chart = Chart;
+            if (chart == null)
+            {
+                return 0;
+            }
+
+            var value = chart.GetInvertedValueScale(ValueAxisName).Compose(Value);
             var x = value(item);
 
             return x;
@@ -176,33 +232,58 @@ namespace Radzen.Blazor
         /// <inheritdoc />
         protected override string TooltipValue(TItem item)
         {
-            return Chart.ValueAxis.Format(Chart.CategoryScale, Chart.CategoryScale.Value(Value(item)));
+            var chart = Chart;
+            if (chart == null)
+            {
+                return string.Empty;
+            }
+
+            var scale = chart.GetInvertedValueScale(ValueAxisName);
+            return chart.GetValueAxis(ValueAxisName).Format(scale, scale.Value(Value(item)));
         }
 
         /// <inheritdoc />
         protected override string TooltipTitle(TItem item)
         {
-            var category = Category(Chart.ValueScale);
-            return Chart.CategoryAxis.Format(Chart.ValueScale, Chart.ValueScale.Value(category(item)));
+            var chart = Chart;
+            if (chart == null)
+            {
+                return string.Empty;
+            }
+
+            var category = Category(chart.ValueScale);
+            return chart.CategoryAxis.Format(chart.ValueScale, chart.ValueScale.Value(category(item)));
         }
 
         /// <inheritdoc />
         public override (object, Point) DataAt(double x, double y)
         {
-            var value = ComposeValue(Chart.CategoryScale);
-            var category = ComposeCategory(Chart.ValueScale);
-            var ticks = Chart.CategoryScale.Ticks(Chart.ValueAxis.TickDistance);
-            var x0 = Chart.CategoryScale.Scale(Math.Max(0, ticks.Start));
+            var chart = Chart;
+            if (chart == null)
+            {
+                return (default!, new Point());
+            }
+
+            var vs = chart.GetInvertedValueScale(ValueAxisName);
+            var value = ComposeValue(vs);
+            var category = ComposeCategory(chart.ValueScale);
+            var ticks = vs.Ticks(chart.GetValueAxis(ValueAxisName).TickDistance);
+            var x0 = vs.Scale(Math.Max(0, ticks.Start));
 
             var barSeries = VisibleBarSeries;
             var index = barSeries.IndexOf(this);
-            var padding = Chart.BarOptions.Margin;
+            if (barSeries.Count == 0 || index < 0)
+            {
+                return (default!, new Point());
+            }
+
+            var padding = chart.BarOptions?.Margin ?? 0;
             var bandHeight = BandHeight;
-            var height = bandHeight / barSeries.Count() - padding + padding / barSeries.Count();
+            var (height, groupHeight) = Rendering.BandLayout.Resolve(bandHeight, barSeries.Count, padding, chart.BarOptions?.EffectiveMaxHeight);
 
             foreach (var data in Items)
             {
-                var startY = category(data) - bandHeight / 2 + index * height + index * padding;
+                var startY = category(data) - groupHeight / 2 + index * (height + padding);
                 var endY = startY + height;
                 var dataX = value(data);
                 var startX = Math.Min(dataX, x0);
@@ -210,23 +291,34 @@ namespace Radzen.Blazor
 
                 if (startX <= x && x <= endX && startY <= y && y <= endY)
                 {
-                    return (data, new Point() { X = x, Y = y });
+                    return (data!, new Point() { X = x, Y = y });
                 }
             }
 
-            return (null, null);
+            return (default!, new Point());
         }
 
         /// <inheritdoc />
         internal override double TooltipY(TItem item)
         {
-            var category = ComposeCategory(Chart.ValueScale);
+            var chart = Chart;
+            if (chart == null)
+            {
+                return 0;
+            }
+
+            var category = ComposeCategory(chart.ValueScale);
             var barSeries = VisibleBarSeries;
             var index = barSeries.IndexOf(this);
-            var padding = Chart.BarOptions.Margin;
+            if (barSeries.Count == 0 || index < 0)
+            {
+                return 0;
+            }
+
+            var padding = chart.BarOptions?.Margin ?? 0;
             var bandHeight = BandHeight;
-            var height = bandHeight / barSeries.Count() - padding + padding / barSeries.Count();
-            var y = category(item) - bandHeight / 2 + index * height + index * padding;
+            var (height, groupHeight) = Rendering.BandLayout.Resolve(bandHeight, barSeries.Count, padding, chart.BarOptions?.EffectiveMaxHeight);
+            var y = category(item) - groupHeight / 2 + index * (height + padding);
 
             return y + height / 2;
         }
@@ -234,20 +326,52 @@ namespace Radzen.Blazor
         /// <inheritdoc />
         public override IEnumerable<ChartDataLabel> GetDataLabels(double offsetX, double offsetY)
         {
+            return GetDataLabels(offsetX, offsetY, DataLabelPosition.Auto);
+        }
+
+        /// <inheritdoc />
+        public override IEnumerable<ChartDataLabel> GetDataLabels(double offsetX, double offsetY, DataLabelPosition position)
+        {
             var list = new List<ChartDataLabel>();
-
-            (string Anchor, int Sign) position;
-
-            foreach (var d in Data)
+            var chart = Chart;
+            if (chart == null)
             {
-                position = Value(d) < 0 ? ("end", -1) : Value(d) == 0 ? ("middle", 0) : ("start", 1);
+                return list;
+            }
 
-                list.Add(new ChartDataLabel
+            if (Data != null)
+            {
+                const double gap = 8;
+                const double verticalGap = 16;
+                var vs = chart.GetInvertedValueScale(ValueAxisName);
+                var ticks = vs.Ticks(chart.GetValueAxis(ValueAxisName).TickDistance);
+                var x0 = vs.Scale(Math.Max(0, ticks.Start));
+
+                foreach (var d in Data)
                 {
-                    Position = new Point() { X = TooltipX(d) + offsetX + (8 * position.Sign), Y = TooltipY(d) + offsetY },
-                    TextAnchor = position.Anchor,
-                    Text = Chart.ValueAxis.Format(Chart.CategoryScale, Value(d))
-                });
+                    var value = Value(d);
+                    var sign = value < 0 ? -1 : value == 0 ? 0 : 1;
+                    var end = TooltipX(d);
+                    var anchorY = TooltipY(d);
+
+                    var (x, y, textAnchor) = position switch
+                    {
+                        DataLabelPosition.Top => (end, anchorY - verticalGap, "middle"),
+                        DataLabelPosition.Bottom => (end, anchorY + verticalGap, "middle"),
+                        DataLabelPosition.Inside => (end - gap * sign, anchorY, sign < 0 ? "start" : sign > 0 ? "end" : "middle"),
+                        DataLabelPosition.Center => (end + (x0 - end) / 2, anchorY, "middle"),
+                        _ => (end + gap * sign, anchorY, sign < 0 ? "end" : sign > 0 ? "start" : "middle"),
+                    };
+
+                    list.Add(new ChartDataLabel
+                    {
+                        Position = new Point() { X = x + offsetX, Y = y + offsetY },
+                        Anchor = new Point() { X = end, Y = anchorY },
+                        Value = value,
+                        TextAnchor = textAnchor,
+                        Text = chart.GetValueAxis(ValueAxisName).Format(vs, value)
+                    });
+                }
             }
 
             return list;

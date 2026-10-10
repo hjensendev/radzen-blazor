@@ -1,15 +1,17 @@
-﻿@page "/tabs"
-@page "/docs/guides/components/tabs.html"
+@page "/tabs"
 
 <RadzenText TextStyle="TextStyle.H2" TagName="TagName.H1" class="rz-pt-8">
-    Tabs
+    Blazor Tabs
 </RadzenText>
 <RadzenText TextStyle="TextStyle.Subtitle1" TagName="TagName.P" class="rz-pb-4">
-    Demonstration and configuration of the Radzen Blazor <strong>Tabs</strong> component.
+    The Blazor Tabs component organizes content into tabbed panels, with positioning, dynamic tabs, and lazy or client/server rendering.
 </RadzenText>
 
-<RadzenText Anchor="tabs#tabs-position" TextStyle="TextStyle.H5" TagName="TagName.H2" class="rz-pt-8 rz-mb-6">
+<RadzenText Anchor="tabs#tabs-position" TextStyle="TextStyle.H5" TagName="TagName.H2" class="rz-pt-8">
     Tabs position
+</RadzenText>
+<RadzenText TextStyle="TextStyle.Body1" class="rz-mb-8">
+    Use the <code>TabPosition</code> property to position tabs at the top, bottom, left, or right of the content area.
 </RadzenText>
 <RadzenExample ComponentName="Tabs" Example="TabsPosition">
     <TabsPosition />
@@ -46,14 +48,16 @@
     <TabsModify />
 </RadzenExample>
 
-<RadzenText Anchor="tabs#tabs-wrap" TextStyle="TextStyle.H5" TagName="TagName.H2" class="rz-pt-12">
-    Tab items wrap
+<RadzenText Anchor="tabs#tabs-overflow" TextStyle="TextStyle.H5" TagName="TagName.H2" class="rz-pt-12">
+    Tabs overflow
 </RadzenText>
 <RadzenText TextStyle="TextStyle.Body1" class="rz-mb-8">
-    Demonstrating wrap of the Tab items
+    Use the <code>Overflow</code> property to control what happens when the tabs do not fit in the available space.
+    <code>TabsOverflow.Default</code> shrinks the tabs to their minimum size and lets the tab list overflow, <code>TabsOverflow.Wrap</code> wraps them to additional lines, <code>TabsOverflow.Scroll</code> scrolls the tab list
+    and <code>TabsOverflow.Collapse</code> moves the tabs that do not fit into a dropdown menu opened from a button at the end of the tab list. The selected tab always stays visible.
 </RadzenText>
-<RadzenExample ComponentName="Tabs" Example="TabsWrap">
-    <TabsWrap />
+<RadzenExample ComponentName="Tabs" Example="TabsOverflowModes">
+    <TabsOverflowModes />
 </RadzenExample>
 
 <RadzenText Anchor="tabs#prevent-tab-change" TextStyle="TextStyle.H5" TagName="TagName.H2" class="rz-pt-12">
@@ -66,6 +70,16 @@
     <TabsChange />
 </RadzenExample>
 
+
+<RadzenText Anchor="tabs#reorder" TextStyle="TextStyle.H5" TagName="TagName.H2" class="rz-pt-12">
+    Reorder tabs
+</RadzenText>
+<RadzenText TextStyle="TextStyle.Body1" class="rz-mb-8">
+    Set <code>AllowReorder</code> to <code>true</code> to enable drag and drop reordering of tabs.
+</RadzenText>
+<RadzenExample ComponentName="Tabs" Example="TabsReorder">
+    <TabsReorder />
+</RadzenExample>
 
 <RadzenText Anchor="tabs#keyboard-navigation" TextStyle="TextStyle.H5" TagName="TagName.H2" class="rz-pt-12">
     Keyboard Navigation
@@ -80,8 +94,12 @@
     public List<KeyboardShortcut> shortcuts = new()
     {
         new KeyboardShortcut { Key = "Tab", Action = "Navigate to a Tabs component." },
-        new KeyboardShortcut { Key = "RightArrow", Action = "Focus next Tab." },
-        new KeyboardShortcut { Key = "LeftArrow", Action = "Focus previous Tab." },
+        new KeyboardShortcut { Key = "RightArrow", Action = "Focus next Tab in a horizontal tab list, wrapping from the last Tab to the first and skipping disabled Tabs." },
+        new KeyboardShortcut { Key = "LeftArrow", Action = "Focus previous Tab in a horizontal tab list, wrapping from the first Tab to the last and skipping disabled Tabs." },
+        new KeyboardShortcut { Key = "DownArrow", Action = "Focus next Tab in a vertical tab list, wrapping from the last Tab to the first and skipping disabled Tabs." },
+        new KeyboardShortcut { Key = "UpArrow", Action = "Focus previous Tab in a vertical tab list, wrapping from the first Tab to the last and skipping disabled Tabs." },
+        new KeyboardShortcut { Key = "Home", Action = "Focus the first Tab." },
+        new KeyboardShortcut { Key = "End", Action = "Focus the last Tab." },
         new KeyboardShortcut { Key = "Space or Enter on a focused Tab", Action = "Select the Tab." }
     };
 }

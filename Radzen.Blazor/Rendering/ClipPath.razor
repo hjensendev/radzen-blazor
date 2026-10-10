@@ -1,14 +1,24 @@
 @inherits RadzenChartComponentBase
 <defs>
-    <clipPath id="@Chart.ClipPath">
+    <clipPath id="@(Chart?.ClipPath ?? "")">
         <path d="@Path"></path>
+    </clipPath>
+    <clipPath id="@(Chart?.AxisClipPath ?? "")">
+        <rect x="@Bounds.X.ToInvariantString()" y="@Bounds.Y.ToInvariantString()" width="@Bounds.Width.ToInvariantString()" height="@Bounds.Height.ToInvariantString()"></rect>
     </clipPath>
 </defs>
 @code {
-    string Path { get; set; }
+    string? Path { get; set; }
+
+    (double X, double Y, double Width, double Height) Bounds { get; set; }
 
     protected override void Initialize()
     {
+        if (Chart == null)
+        {
+            return;
+        }
+
         var categoryTicks = Chart.CategoryScale.Ticks(Chart.CategoryAxis.TickDistance);
         var valueTicks = Chart.ValueScale.Ticks(Chart.ValueAxis.TickDistance);
 
@@ -19,5 +29,7 @@
         var y2 = Chart.ValueScale.Scale(valueTicks.End).ToInvariantString();
 
         Path = $"M {x1} {y1} L {x2} {y1} L {x2} {y2} L {x1} {y2}";
+
+        Bounds = Chart.PlotRelativeBounds;
     }
 }

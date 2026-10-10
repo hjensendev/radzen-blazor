@@ -6,13 +6,14 @@
 @if (Visible)
 {
     <div @ref="@Element" @attributes="Attributes" class="@GetCssClass()" style="@Style" id="@GetId()"
-        tabindex="0" @onkeydown="@OnKeyPress" @onkeydown:preventDefault=preventKeyPress @onkeydown:stopPropagation
-        @onfocus=@(args => focusedIndex = focusedIndex == -1 ? 0: focusedIndex)>
-    <ul class="rz-tree-container">
+        role="tree" aria-multiselectable="@(AllowCheckBoxes ? "true" : null)"
+        aria-label="@AriaLabel" aria-labelledby="@AriaLabelledBy" aria-activedescendant="@ActiveDescendantId"
+        tabindex="0" @onkeydown="@OnKeyPress" @onkeydown:preventDefault=preventKeyPress @onkeydown:stopPropagation="stopKeydownPropagation">
+    <ul class="rz-tree-container" role="presentation">
         <CascadingValue Value=this>
             @ChildContent
         </CascadingValue>
-        @if (Data != null && Levels.Any())
+        @if (Data != null && Levels != null && Levels.Any())
             {
                 <CascadingValue Value=this>
                     @RenderChildren(Data, 0)

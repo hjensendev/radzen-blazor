@@ -1,4 +1,5 @@
-﻿using Microsoft.AspNetCore.Components;
+using Microsoft.AspNetCore.Components;
+using System;
 
 namespace Radzen.Blazor
 {
@@ -6,28 +7,29 @@ namespace Radzen.Blazor
     /// RadzenCheckBoxListItem component.
     /// </summary>
     /// <typeparam name="TValue">The type of the value.</typeparam>
-    public partial class RadzenCheckBoxListItem<TValue> : RadzenComponent
+    public partial class RadzenCheckBoxListItem<
+        [System.Diagnostics.CodeAnalysis.DynamicallyAccessedMembers(System.Diagnostics.CodeAnalysis.DynamicallyAccessedMemberTypes.PublicProperties | System.Diagnostics.CodeAnalysis.DynamicallyAccessedMemberTypes.PublicFields)] TValue> : RadzenComponent, IRadzenCheckBoxListItem
     {
         /// <summary>
         /// Gets or sets the text.
         /// </summary>
         /// <value>The text.</value>
         [Parameter]
-        public string Text { get; set; }
+        public string? Text { get; set; }
 
         /// <summary>
         /// Gets or sets the template.
         /// </summary>
         /// <value>The template.</value>
         [Parameter]
-        public RenderFragment<RadzenCheckBoxListItem<TValue>> Template { get; set; }
+        public RenderFragment<RadzenCheckBoxListItem<TValue>>? Template { get; set; }
 
         /// <summary>
         /// Gets or sets the value.
         /// </summary>
         /// <value>The value.</value>
         [Parameter]
-        public TValue Value { get; set; }
+        public TValue? Value { get; set; }
 
         /// <summary>
         /// Gets or sets a value indicating whether this <see cref="RadzenCheckBoxListItem{TValue}"/> is disabled.
@@ -43,28 +45,42 @@ namespace Radzen.Blazor
         [Parameter]
         public bool ReadOnly { get; set; }
 
-        RadzenCheckBoxList<TValue> _checkBoxList;
+        IRadzenCheckBoxList? checkBoxList;
 
         /// <summary>
         /// Gets or sets the CheckBox list.
         /// </summary>
         /// <value>The CheckBox list.</value>
         [CascadingParameter]
-        public RadzenCheckBoxList<TValue> CheckBoxList
+        public IRadzenCheckBoxList? CheckBoxList
         {
             get
             {
-                return _checkBoxList;
+                return checkBoxList;
             }
             set
             {
-                if (_checkBoxList != value)
+                if (checkBoxList != value)
                 {
-                    _checkBoxList = value;
-                    _checkBoxList.AddItem(this);
+                    checkBoxList = value;
+                    checkBoxList?.AddItem(this);
                 }
             }
         }
+
+        object? IRadzenCheckBoxListItem.Value => Value;
+
+        RenderFragment? IRadzenCheckBoxListItem.Template => Template?.Invoke(this);
+
+        ElementReference IRadzenCheckBoxListItem.Element
+        {
+            get => Element;
+            set => Element = value;
+        }
+
+        string? IRadzenCheckBoxListItem.GetItemId() => GetItemId();
+
+        string IRadzenCheckBoxListItem.GetItemCssClass() => GetItemCssClass();
 
         /// <summary>
         /// Disposes this instance.
@@ -73,6 +89,7 @@ namespace Radzen.Blazor
         {
             base.Dispose();
             CheckBoxList?.RemoveItem(this);
+            GC.SuppressFinalize(this);
         }
 
         internal void SetText(string value)
@@ -95,7 +112,7 @@ namespace Radzen.Blazor
             ReadOnly = value;
         }
 
-        internal string GetItemId()
+        internal string? GetItemId()
         {
             return GetId();
         }

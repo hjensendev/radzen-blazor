@@ -22,24 +22,9 @@ namespace Radzen.Blazor
         public override string Icon => "view_list";
 
         /// <inheritdoc />
-        public override string Title
-        {
-            get
-            {
-                if (StartMonth == Month.January)
-                {
-                    return Scheduler.CurrentDate.ToString("yyyy", Scheduler.Culture);
-                }
-                else
-                {
-                    return (Scheduler.CurrentDate.Month < (int)StartMonth + 1) ? $"{Scheduler.CurrentDate.AddYears(-1).ToString("yyyy", Scheduler.Culture)}-{Scheduler.CurrentDate.ToString("yyyy", Scheduler.Culture)}" : $"{Scheduler.CurrentDate.ToString("yyyy", Scheduler.Culture)}-{Scheduler.CurrentDate.AddYears(+1).ToString("yyyy", Scheduler.Culture)}";
-                }
-            }
-        }
-
-        /// <inheritdoc />
         [Parameter]
-        public override string Text { get; set; } = "Planner";
+        public override string Text { get => text ?? Localize(nameof(RadzenStrings.YearPlannerView_Text)); set => text = value; }
+        private string? text;
 
         /// <summary>
         /// Specifies the maximum appointnments to render in a slot.
@@ -48,30 +33,21 @@ namespace Radzen.Blazor
         [Parameter]
         public int? MaxAppointmentsInSlot { get; set; }
 
+        private string? moreText;
+
         /// <summary>
         /// Specifies the text displayed when there are more appointments in a slot than <see cref="MaxAppointmentsInSlot" />.
         /// </summary>
         /// <value>The more text. Set to <c>"+ {0} more"</c> by default.</value>
         [Parameter]
-        public string MoreText { get; set; } = "+{0}";
+        public string MoreText { get => moreText ?? Localize(nameof(RadzenStrings.YearPlannerView_MoreText)); set => moreText = value; }
 
         /// <inheritdoc />
         public override DateTime StartDate
         {
             get
             {
-                if(StartMonth == Month.January)
-                {
-                    var d = new DateTime(Scheduler.CurrentDate.Date.Year, 1, 1).StartOfWeek();
-                    if (d.DayOfWeek == DateTimeFormatInfo.CurrentInfo.FirstDayOfWeek) d.AddDays(-7);
-                    return d;
-                }
-                else
-                {
-                    var d = new DateTime(Scheduler.CurrentDate.Date.Year + (Scheduler.CurrentDate.Month < (int)StartMonth + 1 ? -1 : 0), (int)StartMonth + 1, 1).StartOfWeek();
-                    if (d.DayOfWeek == DateTimeFormatInfo.CurrentInfo.FirstDayOfWeek) d.AddDays(-7);
-                    return d;
-                }
+                return Scheduler == null ? DateTime.Today : GetYearRange().viewStart;
             }
         }
 
@@ -80,9 +56,7 @@ namespace Radzen.Blazor
         {
             get
             {
-                var realFirstYear = StartDate.AddDays(7);
-                var d = StartDate.AddDays(DateTime.IsLeapYear(realFirstYear.Year) || DateTime.IsLeapYear(realFirstYear.Year + 1) ? 366 : 365).EndOfWeek();
-                return d;
+                return Scheduler == null ? DateTime.Today : GetYearRange().viewEnd;
             }
         }
 
@@ -96,13 +70,13 @@ namespace Radzen.Blazor
         /// <inheritdoc />
         public override DateTime Next()
         {
-            return Scheduler.CurrentDate.Date.AddYears(1);
+            return Scheduler?.CurrentDate.Date.AddYears(1) ?? DateTime.Today.AddYears(1);
         }
 
         /// <inheritdoc />
         public override DateTime Prev()
         {
-            return Scheduler.CurrentDate.Date.AddYears(-1);
+            return Scheduler?.CurrentDate.Date.AddYears(-1) ?? DateTime.Today.AddYears(-1);
         }
     }
 }

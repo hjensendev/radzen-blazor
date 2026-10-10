@@ -33,12 +33,6 @@ $panel-shadow: none !default;
   margin: var(--rz-panel-content-margin);
 }
 
-.rz-panel-content-wrapper {
-  &[aria-hidden='true'] {
-    display: none;
-  }
-}
-
 .rz-panel-title {
   line-height: var(--rz-panel-title-line-height);
   font-weight: var(--rz-panel-title-font-weight);
@@ -50,6 +44,8 @@ $panel-shadow: none !default;
   font-size: var(--rz-panel-toggle-icon-font-size);
   border-radius: var(--rz-panel-toggle-icon-border-radius);
   background-color: var(--rz-panel-toggle-icon-background-color);
+  border: none;
+  padding: 0;
   color: inherit;
   display: flex;
   align-items: center;

@@ -20,10 +20,10 @@ namespace Radzen.Blazor
         /// </summary>
         /// <value>The icon.</value>
         [Parameter]
-        public string Icon { get; set; }
+        public string? Icon { get; set; }
 
         /// <summary>
-        /// Handles the <see cref="E:Click" /> event.
+        /// Handles the click event.
         /// </summary>
         /// <param name="args">The <see cref="EventArgs"/> instance containing the event data.</param>
         public async System.Threading.Tasks.Task OnClick(EventArgs args)
@@ -37,10 +37,12 @@ namespace Radzen.Blazor
             return "rz-sidebar-toggle";
         }
 
+        private string? toggleAriaLabel;
+
         /// <summary>
         /// Gets or sets the add button aria-label attribute.
         /// </summary>
         [Parameter]
-        public string ToggleAriaLabel { get; set; } = "Toggle";
+        public string ToggleAriaLabel { get => toggleAriaLabel ?? Localize(nameof(RadzenStrings.SidebarToggle_ToggleAriaLabel)); set => toggleAriaLabel = value; }
     }
 }

@@ -1,0 +1,18 @@
+using System;
+
+namespace Radzen.Documents.Markdown;
+
+/// <summary>
+/// Represents a strong node: <c>**strong**</c>.
+/// </summary>
+public class Strong : InlineContainer
+{
+    internal char? Marker { get; set; }
+
+    /// <inheritdoc />
+    public override void Accept(INodeVisitor visitor)
+    {
+        ArgumentNullException.ThrowIfNull(visitor);
+        visitor.VisitStrong(this);
+    }
+}

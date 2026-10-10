@@ -3,12 +3,15 @@
 @if (Visible)
 {
     <button @ref="@Element" style="@Style" disabled="@IsDisabled"
-            type="@Enum.GetName(typeof(ButtonType), ButtonType).ToLower()"
+            type="@((Enum.GetName(typeof(ButtonType), ButtonType) ?? ButtonType.ToString()).ToLower())"
             @attributes="Attributes" class="@GetCssClass()" id="@GetId()"
-            @onclick="@OnClick" tabindex="@(Disabled ? "-1" : $"{TabIndex}")">
-        <div class="rz-helper-hidden-accessible">
-            <input type="checkbox" name="@Name" id="@Name" checked="@Value" value="@(Value.ToString().ToLower())" tabindex="-1" aria-checked="@(Value.ToString().ToLowerInvariant())" @attributes=@InputAttributes>
-        </div>
+            @onclick="@OnClick" tabindex="@(Disabled ? "-1" : $"{TabIndex}")"
+            aria-label="@AriaLabel" aria-pressed="@(Value.ToString().ToLowerInvariant())"
+            aria-expanded="@AriaExpanded" aria-controls="@AriaControls" aria-haspopup="@AriaHasPopup">
+        @if (!string.IsNullOrEmpty(Name))
+        {
+            <input type="hidden" name="@Name" id="@Name" value="@(Value.ToString().ToLowerInvariant())" @attributes=@InputAttributes />
+        }
         <span class="rz-button-box">
             @if (ChildContent != null)
             {
@@ -26,9 +29,9 @@
                 }
                 else
                 {
-                    @if (!string.IsNullOrEmpty(getIcon()))
+                    @if (!string.IsNullOrEmpty(GetIcon()))
                     {
-                        <i class="notranslate rz-button-icon-left rzi" style="@(!string.IsNullOrEmpty(IconColor) ? $"color:{IconColor}" : null)">@((MarkupString)getIcon())</i>
+                        <i class="notranslate rz-button-icon-left rzi" aria-hidden="true" style="@(!string.IsNullOrEmpty(IconColor) ? $"color:{IconColor}" : null)">@GetIcon()</i>
                     }
                     @if (!string.IsNullOrEmpty(Image))
                     {

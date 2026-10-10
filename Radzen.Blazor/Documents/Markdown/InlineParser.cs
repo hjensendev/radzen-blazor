@@ -1,0 +1,1172 @@
+using System.Net;
+using System.Text.RegularExpressions;
+using System.Text;
+using System.Collections.Generic;
+using System;
+
+namespace Radzen.Documents.Markdown;
+
+class InlineParser
+{
+    class Delimiter
+    {
+        public char Char { get; set; }
+        public int Length { get; set; }
+        public int OriginalLength { get; set; }
+        public int Position { get; set; }
+        public int Start { get; set; }
+        public int End { get; set; }
+        public Text? Node { get; set; }
+        public bool CanOpen { get; set; }
+        public bool CanClose { get; set; }
+        public bool Active { get; set; } = true;
+    }
+
+    private const char Asterisk = '*';
+    private const char Underscore = '_';
+    internal const char Tilde = '~';
+    internal const char Backslash = '\\';
+    private const char Null = '\0';
+    private const char Backtick = '`';
+    internal const char Space = ' ';
+    internal const char LineFeed = '\n';
+    private const char CarrigeReturn = '\r';
+    internal const char OpenBracket = '[';
+    internal const char CloseBracket = ']';
+    private const char OpenParenthesis = '(';
+    private const char CloseParenthesis = ')';
+    internal const char Quote = '"';
+    internal const char OpenAngleBracket = '<';
+    internal const char CloseAngleBracket = '>';
+    private const char SingleQuote = '\'';
+    private const char Exclamation = '!';
+    internal const char Colon = ':';
+
+    private readonly List<Inline> inlines = [];
+    private readonly List<Delimiter> delimiters = [];
+    private readonly StringBuilder buffer = new();
+    private int bufferStart;
+    private int bufferEnd;
+    
+    private void Append(char ch, int index)
+    {
+        if (buffer.Length == 0)
+        {
+            bufferStart = index;
+        }
+    
+        buffer.Append(ch);
+    
+        bufferEnd = index + 1;
+    }
+
+    enum LinkState
+    {
+        Text,
+        Destination,
+        Title
+    }
+
+    private void AddTextNode(bool trim = false)
+    {
+        if (buffer.Length > 0)
+        {
+            var output = new StringBuilder();
+
+            for (var index = 0; index < buffer.Length; index++)
+            {
+                output.Append(buffer[index]);
+            }
+
+            var value = output.ToString();
+            var end = bufferEnd;
+
+            if (trim)
+            {
+                var trimmed = value.TrimEnd(Blanks);
+                end -= value.Length - trimmed.Length;
+                value = trimmed;
+            }
+
+            inlines.Add(new Text(value) { SourceStart = bufferStart, SourceEnd = Math.Max(bufferStart, end) });
+
+            buffer.Clear();
+        }
+    }
+
+    private bool TryParseCode(string text, int index, out int newIndex)
+    {
+        if (text[index] is not Backtick)
+        {
+            newIndex = index;
+            return false;
+        }
+
+        AddTextNode();
+
+        // Count opening backticks
+        var openingCount = 0;
+        var position = index;
+        while (position < text.Length && text[position] is Backtick)
+        {
+            openingCount++;
+            position++;
+        }
+
+        // Find matching closing backticks
+        var searchStart = position;
+        var bestMatch = -1;
+
+        while (position < text.Length)
+        {
+            // Count consecutive backticks
+            var count = 0;
+            var closingStart = position;
+            while (position < text.Length && text[position] is Backtick)
+            {
+                count++;
+                position++;
+            }
+
+            if (count == openingCount)
+            {
+                bestMatch = closingStart;
+                break;
+            }
+
+            if (position < text.Length)
+            {
+                position++;
+            }
+        }
+
+        if (bestMatch >= 0)
+        {
+            var content = text[searchStart..bestMatch];
+
+            content = BlockParser.NewLineRegex.Replace(content, $"{Space}");
+
+            if (content.StartsWith(Space) && content.EndsWith(Space) && !string.IsNullOrWhiteSpace(content))
+            {
+                content = content[1..^1];
+            }
+
+            inlines.Add(new Code(content) { SourceStart = index, SourceEnd = bestMatch + openingCount });
+
+            newIndex = bestMatch + openingCount;
+
+
+            return true;
+        }
+
+        inlines.Add(new Text(new string(Backtick, openingCount)) { SourceStart = index, SourceEnd = index + openingCount });
+
+        newIndex = index + openingCount;
+
+        return true;
+    }
+
+    // CommonMark 0.31.2, 2.5 Entity and numeric character references
+    private static readonly Regex EntityRegex = new(@"\G&(?:#[0-9]{1,7}|#[xX][0-9a-fA-F]{1,6}|[A-Za-z][A-Za-z0-9]{1,31});", RegexOptions.Compiled);
+
+    private bool TryParseEntity(string text, int index, out int newIndex)
+    {
+        newIndex = index;
+
+        if (text[index] != '&')
+        {
+            return false;
+        }
+
+        var match = EntityRegex.Match(text, index);
+
+        if (!match.Success)
+        {
+            return false;
+        }
+
+        var decoded = WebUtility.HtmlDecode(match.Value);
+
+        if (decoded == match.Value)
+        {
+            return false;
+        }
+
+        AddTextNode();
+        inlines.Add(new Text(decoded == "\0" ? "\uFFFD" : decoded) { SourceStart = index, SourceEnd = index + match.Length });
+        newIndex = index + match.Length;
+        return true;
+    }
+
+    private bool TryParseBackslash(string text, int index, char next, out int newIndex)
+    {
+        if (text[index] is not Backslash)
+        {
+            newIndex = index;
+            return false;
+        }
+
+        if (next.IsEscapable())
+        {
+            AddTextNode();
+            inlines.Add(new Text(text[index + 1].ToString()) { SourceStart = index, SourceEnd = index + 2 });
+            newIndex = index + 2;
+            return true;
+        }
+
+        Append(text[index], index);
+        newIndex = index + 1;
+        return true;
+    }
+
+    private bool TryParseDelimiter(string text, int index, char next, char prev, out int newIndex)
+    {
+        var ch = text[index];
+
+        if (ch is not (Asterisk or Underscore or Tilde or OpenBracket) && (ch is not Exclamation || next is not OpenBracket))
+        {
+            newIndex = index;
+            return false;
+        }
+
+        AddTextNode();
+
+        var position = index;
+
+        while (position < text.Length && text[position] == ch)
+        {
+            Append(ch, position);
+
+            position++;
+        }
+
+        if (ch is Exclamation)
+        {
+            Append(OpenBracket, position);
+            position++;
+        }
+
+        next = position < text.Length ? text[position] : Null;
+
+        if (buffer.Length > 0)
+        {
+            var node = new Text(buffer.ToString()) { SourceStart = index, SourceEnd = position };
+            var leftFlanking = LeftFlanking(prev, next);
+            var rightFlanking = RightFlanking(prev, next);
+
+            var canOpen = false;
+            var canClose = false;
+
+            if (ch is Asterisk or Tilde)
+            {
+                canOpen = leftFlanking;
+                canClose = rightFlanking;
+            }
+
+            if (ch is Underscore)
+            {
+                canClose = rightFlanking && (!leftFlanking || next.IsPunctuation());
+                canOpen = leftFlanking && (!rightFlanking || prev.IsPunctuation());
+            }
+
+            var delimiter = new Delimiter
+            {
+                Node = node,
+                Char = ch,
+                Length = buffer.Length,
+                OriginalLength = buffer.Length,
+                Position = index,
+                Start = index,
+                End = position,
+                CanClose = canClose,
+                CanOpen = canOpen
+            };
+
+            delimiters.Add(delimiter);
+            inlines.Add(node);
+            buffer.Clear();
+        }
+
+        newIndex = position;
+        return true;
+    }
+
+    private static bool RightFlanking(char prev, char next)
+    {
+        /*
+        that is (1) not preceded by Unicode whitespace, and either (2a) not preceded by a Unicode punctuation character, 
+        or (2b) preceded by a Unicode punctuation character and followed by Unicode whitespace or a Unicode punctuation character.
+        */
+
+        return !prev.IsNullOrWhiteSpace() && (!prev.IsPunctuation() || next.IsNullOrWhiteSpace() || next.IsPunctuation());
+    }
+
+    private static bool LeftFlanking(char prev, char next)
+    {
+        /*
+        that is (1) not followed by Unicode whitespace, and either (2a) not followed by a Unicode punctuation character, 
+        or (2b) followed by a Unicode punctuation character and preceded by Unicode whitespace or a Unicode punctuation character.
+        */
+
+        return !next.IsNullOrWhiteSpace() && (!next.IsPunctuation() || prev.IsNullOrWhiteSpace() || prev.IsPunctuation());
+    }
+
+    public static List<Inline> Parse(string text, Dictionary<string, LinkReference> linkReferences)
+    {
+        var parser = new InlineParser();
+
+        return parser.ParseInto(text, linkReferences);
+    }
+
+    private static void Shift(IEnumerable<Inline> inlines, int offset)
+    {
+        foreach (var inline in inlines)
+        {
+            inline.SourceStart += offset;
+            inline.SourceEnd += offset;
+
+            if (inline is InlineContainer container)
+            {
+                Shift(container.Children, offset);
+            }
+        }
+    }
+
+    internal static void Locate(IEnumerable<Inline> inlines, ContentMap content)
+    {
+        foreach (var inline in inlines)
+        {
+            inline.SourceStart = content.ToSource(inline.SourceStart);
+            inline.SourceEnd = Math.Max(inline.SourceStart, content.ToSourceEnd(inline.SourceEnd));
+
+            if (inline is InlineContainer container)
+            {
+                Locate(container.Children, content);
+            }
+        }
+    }
+
+    private List<Inline> ParseInto(string text, Dictionary<string, LinkReference> linkReferences)
+    {
+        var trimmed = text.Trim(Blanks);
+
+        var inlines = ParseInlines(trimmed, linkReferences);
+
+        Shift(inlines, text.Length - text.TrimStart(Blanks).Length);
+
+        return inlines;
+    }
+
+    private static readonly Regex EmailRegex = new(@"^([a-zA-Z0-9.!#$%&'*+\/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*)");
+
+    private bool TryParseAutoLink(string text, int index, out int newIndex)
+    {
+        newIndex = index;
+
+        if (text[index] is not OpenAngleBracket)
+        {
+            return false;
+        }
+
+        var destination = new StringBuilder();
+
+        var position = index + 1;
+
+        // CommonMark 0.31.2, 6.5 Autolinks: the URI contains no ASCII control characters, space, < or >
+        while (position < text.Length && text[position] is not CloseAngleBracket)
+        {
+            if (text[position] is Space or OpenAngleBracket || text[position] < ' ')
+            {
+                return false;
+            }
+
+            destination.Append(text[position]);
+            position++;
+        }
+
+        if (position >= text.Length || text[position] is not CloseAngleBracket)
+        {
+            return false;
+        }
+
+        var url = destination.ToString();
+
+        var content = url;
+
+        if (EmailRegex.IsMatch(url))
+        {
+            url = $"mailto:{url}";
+        }
+        else if (!Uri.TryCreate(url, UriKind.Absolute, out _))
+        {
+            return false;
+        }
+
+        AddTextNode();
+
+        var link = new Link { Destination = url, SourceStart = index, SourceEnd = position + 1 };
+
+        link.Add(new Text(content) { SourceStart = index + 1, SourceEnd = position });
+
+        inlines.Add(link);
+
+        newIndex = position + 1;
+
+        return true;
+    }
+
+    private List<Inline> ParseInlines(string text, Dictionary<string, LinkReference> references)
+    {
+        var index = 0;
+
+        while (index < text.Length)
+        {
+            if (TryParseHtml(text, index, out index))
+            {
+                continue;
+            }
+
+            if (TryParseAutoLink(text, index, out index))
+            {
+                continue;
+            }
+
+            if (TryParseCode(text, index, out index))
+            {
+                continue;
+            }
+
+            if (TryParseLineBreak(text, index, out index))
+            {
+                continue;
+            }
+
+            if (TryParseSoftLineBreak(text, index, out index))
+            {
+                continue;
+            }
+
+            char next = index < text.Length - 1 ? text[index + 1] : Null;
+
+            if (TryParseBackslash(text, index, next, out index))
+            {
+                continue;
+            }
+
+            if (TryParseEntity(text, index, out index))
+            {
+                continue;
+            }
+
+            char prev = index > 0 ? text[index - 1] : Null;
+
+            if (TryParseDelimiter(text, index, next, prev, out index))
+            {
+                continue;
+            }
+
+            if (TryParseLinkFromReference(text, index, references, out index))
+            {
+                continue;
+            }
+
+            if (TryParseLinkOrImage(text, index, out index))
+            {
+                continue;
+            }
+
+            if (TryParseEmoji(text, index, out index))
+            {
+                continue;
+            }
+
+            Append(text[index], index);
+
+            index++;
+        }
+
+        AddTextNode();
+
+        ParseEmphasisAndStrong();
+
+        NormalizeText();
+
+        return inlines;
+    }
+
+    // CommonMark 0.31.2, 4.8 Paragraphs: initial and final spaces or tabs are stripped
+    private static readonly char[] Blanks = [' ', '\t', '\r', '\n'];
+
+    private void NormalizeText()
+    {
+        if (inlines.Count > 0)
+        {
+            if (inlines[0] is Text first)
+            {
+                var start = first.Value.TrimStart(Blanks);
+                first.SourceStart += first.Value.Length - start.Length;
+                first.Value = start;
+            }
+
+            if (inlines[^1] is Text last)
+            {
+                var end = last.Value.TrimEnd(Blanks);
+                last.SourceEnd -= last.Value.Length - end.Length;
+                last.Value = end;
+            }
+        }
+    }
+
+    private bool TryParseSoftLineBreak(string text, int index, out int newIndex)
+    {
+        newIndex = index;
+
+        if (TryParseNewLine(text, index, out var position))
+        {
+            AddTextNode(trim: true);
+
+            inlines.Add(new SoftLineBreak { SourceStart = index, SourceEnd = position });
+
+            newIndex = position;
+
+            return true;
+        }
+
+        return false;
+    }
+
+    private bool TryParseLineBreak(string text, int index, out int newIndex)
+    {
+        newIndex = index;
+
+        if (text[index] is not Space && text[index] is not Backslash)
+        {
+            return false;
+        }
+
+        var position = index + 1;
+
+        if (position < text.Length && text[position] is Space)
+        {
+            while (position < text.Length && text[position] is Space)
+            {
+                position++;
+            }
+        }
+
+        if (position != index + 1 && text[index] is Backslash)
+        {
+            return false;
+        }
+
+        if (text[index] is Space && position == index + 1)
+        {
+            return false;
+        }
+
+        if (position < text.Length && TryParseNewLine(text, position, out position))
+        {
+            AddTextNode(trim: true);
+
+            inlines.Add(new LineBreak { SourceStart = index, SourceEnd = position });
+
+            newIndex = position;
+
+            return true;
+        }
+
+        return false;
+    }
+
+    private static bool TryParseNewLine(string text, int position, out int newIndex)
+    {
+        newIndex = position;
+
+        if (position >= text.Length)
+        {
+            return false;
+        }
+
+        if (text[position] is LineFeed)
+        {
+            newIndex = position + 1;
+            return true;
+        }
+
+        if (text[position] is CarrigeReturn && position < text.Length - 1 && text[position + 1] is LineFeed)
+        {
+            newIndex = position + 2;
+            return true;
+        }
+
+        return false;
+    }
+
+    private bool TryParseHtml(string text, int index, out int newIndex)
+    {
+        newIndex = index;
+
+        var match = BlockParser.HtmlRegex.Match(text[index..]);
+
+        if (match.Success)
+        {
+            AddTextNode();
+
+            var value = text[index..(index + match.Length)];
+
+            inlines.Add(new HtmlInline { Value = value, SourceStart = index, SourceEnd = index + match.Length });
+
+            newIndex = index + match.Length;
+
+            return true;
+        }
+
+        return false;
+    }
+
+    private bool TryParseEmoji(string text, int index, out int newIndex)
+    {
+        newIndex = index;
+
+        if (text[index] is not Colon)
+        {
+            return false;
+        }
+
+        var position = index + 1;
+
+        if (position >= text.Length || !(char.IsLetterOrDigit(text[position]) || text[position] is '+' or '-'))
+        {
+            return false;
+        }
+
+        while (position < text.Length && (char.IsLetterOrDigit(text[position]) || text[position] is '_' or '+' or '-'))
+        {
+            position++;
+        }
+
+        if (position >= text.Length || text[position] is not Colon)
+        {
+            return false;
+        }
+
+        var shortcode = text[(index + 1)..position];
+
+        if (!EmojiMapping.Emojis.TryGetValue(shortcode, out var emoji))
+        {
+            return false;
+        }
+
+        AddTextNode();
+
+        inlines.Add(new Text(emoji) { SourceStart = index, SourceEnd = position + 1 });
+
+        newIndex = position + 1;
+
+        return true;
+    }
+
+    internal static bool TryParseDestinationAndTitle(string text, int position, out string destination, out string title, out int newPosition)
+    {
+        newPosition = position;
+        destination = string.Empty;
+        title = string.Empty;
+
+        // Skip whitespace
+        while (position < text.Length && text[position] is Space or LineFeed)
+        {
+            position++;
+        }
+
+        if (position >= text.Length)
+        {
+            return false;
+        }
+
+        // Parse destination
+        var destinationBuilder = new StringBuilder();
+
+        var angleBrackets = position < text.Length && text[position] is OpenAngleBracket;
+
+        if (angleBrackets)
+        {
+            position++;
+        }
+
+        var parentheses = 0;
+
+        while (position < text.Length)
+        {
+            var ch = text[position];
+            var next = position < text.Length - 1 ? text[position + 1] : Null;
+
+            if (ch is Backslash && next.IsEscapable())
+            {
+                destinationBuilder.Append(next);
+                position += 2;
+                continue;
+            }
+
+            if (angleBrackets && ch is CloseAngleBracket)
+            {
+                position++;
+                break;
+            }
+
+            // CommonMark 0.31.2, 6.3 Links: a link destination in angle brackets contains no line endings or unescaped < or > characters
+            if (angleBrackets && ch is LineFeed or CarrigeReturn or OpenAngleBracket)
+            {
+                return false;
+            }
+
+            if (!angleBrackets)
+            {
+                if (ch is OpenParenthesis)
+                {
+                    parentheses++;
+                }
+                else if (ch is CloseParenthesis)
+                {
+                    if (parentheses == 0)
+                    {
+                        break;
+                    }
+                    parentheses--;
+                }
+
+                if (ch is Space or LineFeed)
+                {
+                    break;
+                }
+            }
+
+            destinationBuilder.Append(ch);
+            position++;
+        }
+
+        if (angleBrackets)
+        {
+            // Skip whitespace after angle brackets
+            while (position < text.Length && text[position] is Space)
+            {
+                position++;
+            }
+        }
+
+        // Parse title if present
+        var titleBuilder = new StringBuilder();
+        if (position < text.Length && text[position].IsNullOrWhiteSpace())
+        {
+            var lines = 0;
+
+            while (position < text.Length && text[position].IsNullOrWhiteSpace())
+            {
+                if (text[position] is LineFeed)
+                {
+                    lines++;
+                }
+
+                position++;
+            }
+
+            var titleStart = position;
+
+            if (position < text.Length)
+            {
+                var titleDelimiter = text[position];
+
+                if (titleDelimiter is Quote or SingleQuote or OpenParenthesis)
+                {
+                    position++; // Skip opening delimiter
+
+                    char closingDelimiter = titleDelimiter is OpenParenthesis ? CloseParenthesis : titleDelimiter;
+
+                    while (position < text.Length && text[position] != closingDelimiter)
+                    {
+                        if (text[position] is LineFeed && titleBuilder.Length > 0 && titleBuilder[^1] is LineFeed)
+                        {
+                            return false;
+                        }
+
+                        if (text[position] is Backslash && position + 1 < text.Length && text[position + 1].IsEscapable())
+                        {
+                            position++;
+                        }
+
+                        titleBuilder.Append(text[position]);
+                        position++;
+                    }
+
+                    if (position < text.Length && text[position] == closingDelimiter)
+                    {
+                        position++; // Skip closing delimiter
+
+                        // Skip whitespace after title
+                        while (position < text.Length && text[position] is Space)
+                        {
+                            position++;
+                        }
+
+                        if (position < text.Length)
+                        {
+                            if (position < text.Length && text[position] is not (CloseParenthesis or LineFeed))
+                            {
+                                if (lines > 0)
+                                {
+                                    // non-white space characters after title
+                                    newPosition = titleStart;
+                                    destination = destinationBuilder.ToString();
+                                    title = string.Empty;
+
+                                    return true;
+                                }
+                                else
+                                {
+                                    return false;
+                                }
+                            }
+
+                        }
+                    }
+                    else
+                    {
+                        return false;
+                    }
+                }
+            }
+        }
+
+        if (position < text.Length)
+        {
+            if (text[position] is LineFeed)
+            {
+                position++;
+            }
+            else if (text[position] is Quote or SingleQuote or OpenParenthesis)
+            {
+                return false;
+            }
+        }
+
+        destination = destinationBuilder.ToString();
+        title = titleBuilder.ToString();
+        newPosition = position;
+        return true;
+    }
+
+    private bool TryParseLinkOrImage(string text, int index, out int newIndex)
+    {
+        newIndex = index;
+
+        if (!TryGetOpenerIndex(text, index, out var openerIndex, out var position))
+        {
+            return false;
+        }
+
+        if (!TryParseDestinationAndTitle(text, position, out var destination, out var title, out position))
+        {
+            return false;
+        }
+
+        if (position >= text.Length || text[position] is not CloseParenthesis)
+        {
+            return false;
+        }
+
+        var opener = delimiters[openerIndex];
+
+        InlineContainer container = opener.Char == Exclamation ? new Image { Destination = destination, Title = title } : new Link { Destination = destination, Title = title };
+        container.SourceStart = opener.Node?.SourceStart ?? opener.Position;
+        container.SourceEnd = position + 1;
+
+        ReplaceOpener(openerIndex, container);
+
+        newIndex = position + 1;
+
+        if (container is Link)
+        {
+            for (var delimiterIndex = 0; delimiterIndex < openerIndex; delimiterIndex++)
+            {
+                if (delimiters[delimiterIndex].Char == OpenBracket)
+                {
+                    delimiters[delimiterIndex].Active = false;
+                }
+            }
+        }
+
+        delimiters.Remove(opener);
+
+        return true;
+    }
+
+
+    private bool TryGetOpenerIndex(string text, int index, out int openerIndex, out int position)
+    {
+        position = index;
+        openerIndex = -1;
+
+        if (text[index] is not CloseBracket)
+        {
+            return false;
+        }
+        var di = delimiters.Count - 1;
+
+        while (di >= 0)
+        {
+            var delimiter = delimiters[di];
+
+            if ((delimiter.Active && delimiter.Char is OpenBracket) || delimiter.Char is Exclamation)
+            {
+                openerIndex = di;
+                break;
+            }
+
+            di--;
+        }
+
+        if (di < 0)
+        {
+            return false;
+        }
+
+        AddTextNode();
+
+        position = index + 1;
+
+        // Skip if not followed by opening parenthesis
+        if (position >= text.Length || text[position] is not OpenParenthesis)
+        {
+            delimiters.RemoveAt(openerIndex);
+            return false;
+        }
+
+        position++; // Skip opening parenthesis
+
+        return true;
+    }
+
+    private void ReplaceOpener(int openerIndex, InlineContainer parent)
+    {
+        var startIndex = delimiters[openerIndex].Node != null ? inlines.FindIndex(node => node.Equals(delimiters[openerIndex].Node)) : -1;
+
+        ParseEmphasisAndStrong(openerIndex);
+
+        var endIndex = inlines.Count - startIndex;
+
+        var children = inlines.GetRange(startIndex + 1, endIndex - 1);
+
+        inlines.RemoveRange(startIndex, endIndex);
+
+        foreach (var child in children)
+        {
+            parent.Add(child);
+        }
+
+        inlines.Insert(startIndex, parent);
+    }
+
+
+    private bool TryParseLinkFromReference(string text, int index, Dictionary<string, LinkReference> references, out int newIndex)
+    {
+        newIndex = index;
+
+        if (references.Count == 0 || text[index] is not CloseBracket)
+        {
+            return false;
+        }
+
+        var openerIndex = FindOpenBracketIndex(OpenBracket);
+
+        if (openerIndex < 0)
+        {
+            return false;
+        }
+
+        AddTextNode();
+
+        var startIndex = delimiters[openerIndex].Node != null ? inlines.FindIndex(node => node.Equals(delimiters[openerIndex].Node)) : -1;
+
+        var endIndex = inlines.Count - startIndex;
+
+        var children = inlines.GetRange(startIndex + 1, endIndex - 1);
+
+        var id = new StringBuilder();
+
+        foreach (var child in children)
+        {
+            if (child is Text textNode)
+            {
+                id.Append(textNode.Value);
+            }
+        }
+
+        if (!references.TryGetValue(id.ToString().ToLowerInvariant(), out var reference))
+        {
+            return false;
+        }
+
+        var link = new Link { Destination = reference.Destination, Title = reference.Title };
+        link.SourceStart = delimiters[openerIndex].Node?.SourceStart ?? 0;
+        link.SourceEnd = index + 1;
+
+        foreach (var child in children)
+        {
+            link.Add(child);
+        }
+
+        inlines.RemoveRange(startIndex, endIndex);
+        inlines.Insert(startIndex, link);
+
+        link.Destination = reference.Destination;
+        link.Title = reference.Title;
+        newIndex = index + 1;
+
+        return true;
+    }
+
+    private int FindOpenBracketIndex(char ch)
+    {
+        for (var index = delimiters.Count - 1; index >= 0; index--)
+        {
+            if (delimiters[index].Char == ch)
+            {
+                return index;
+            }
+        }
+
+        return -1;
+    }
+
+    private void ParseEmphasisAndStrong(int index = -1)
+    {
+        var closerIndex = 0;
+
+        while ((closerIndex = FindCloserIndex(index)) > 0)
+        {
+            var openerIndex = FindOpenerIndex(closerIndex, index);
+
+            if (openerIndex >= 0)
+            {
+                var closer = delimiters[closerIndex];
+                var opener = delimiters[openerIndex];
+                var startIndex = opener.Node != null ? inlines.FindIndex(opener.Node.Equals) : -1;
+                var endIndex = closer.Node != null ? inlines.FindIndex(closer.Node.Equals) : -1;
+
+                if (startIndex >= 0 && endIndex >= 0)
+                {
+                    var innerInlines = inlines.GetRange(startIndex + 1, endIndex - startIndex - 1);
+
+                    var charsToConsume = closer.Length >= 2 && opener.Length >= 2 ? 2 : 1;
+
+                    if (closer.Char == Tilde)
+                    {
+                        if (opener.Length < 2 || closer.Length < 2)
+                        {
+                            delimiters.RemoveAt(closerIndex);
+                            continue;
+                        }
+                        charsToConsume = 2;
+                    }
+
+                    InlineContainer parent = closer.Char == Tilde
+                        ? new Strikethrough()
+                        : charsToConsume == 1 ? new Emphasis() : new Strong();
+
+                    parent.SourceStart = opener.End - charsToConsume;
+                    parent.SourceEnd = closer.Start + charsToConsume;
+
+                    foreach (var child in innerInlines)
+                    {
+                        parent.Add(child);
+                    }
+
+
+                    opener.Length -= charsToConsume;
+                    opener.End -= charsToConsume;
+
+                    if (opener.Length > 0 && opener.Node != null)
+                    {
+                        opener.Node.Value = opener.Node.Value[..^charsToConsume];
+                        opener.Node.SourceEnd = opener.End;
+                        startIndex += 1;
+                    }
+
+                    closer.Length -= charsToConsume;
+                    closer.Start += charsToConsume;
+
+                    if (closer.Length > 0 && closer.Node != null)
+                    {
+                        closer.Node.Value = closer.Node.Value[..^charsToConsume];
+                        closer.Node.SourceStart = closer.Start;
+                        endIndex -= 1;
+                    }
+
+                    inlines.RemoveRange(startIndex, endIndex - startIndex + 1);
+
+                    inlines.Insert(startIndex, parent);
+
+                    if (closer.Length == 0)
+                    {
+                        delimiters.RemoveAt(closerIndex);
+                    }
+
+                    delimiters.RemoveRange(openerIndex + 1, closerIndex - openerIndex - 1);
+
+                    if (opener.Length == 0)
+                    {
+                        delimiters.RemoveAt(openerIndex);
+                    }
+                }
+                else
+                {
+                    delimiters.RemoveAt(closerIndex);
+                    delimiters.RemoveAt(openerIndex);
+                }
+            }
+            else if (delimiters[closerIndex].CanOpen)
+            {
+                delimiters[closerIndex].CanClose = false;
+            }
+            else
+            {
+                delimiters.RemoveAt(closerIndex);
+            }
+        }
+    }
+
+    private int FindCloserIndex(int bottom)
+    {
+        for (var index = Math.Max(1, bottom + 1); index < delimiters.Count; index++)
+        {
+            var delimiter = delimiters[index];
+
+            if (delimiter.CanClose && (delimiter.Char is Asterisk or Underscore or Tilde))
+            {
+                return index;
+            }
+        }
+
+        return -1;
+    }
+
+    // CommonMark 0.31.2, 6.2 Emphasis and strong emphasis, rule 9 and 10: the sum of the run lengths must not be a multiple of 3 when either delimiter can both open and close
+    private static bool OddMatch(Delimiter opener, Delimiter closer) =>
+        (closer.CanOpen || opener.CanClose) && closer.OriginalLength % 3 != 0 && (opener.OriginalLength + closer.OriginalLength) % 3 == 0;
+
+    private int FindOpenerIndex(int startIndex, int endIndex)
+    {
+        var closer = delimiters[startIndex];
+
+        for (var index = startIndex - 1; index > endIndex; index--)
+        {
+            var delimiter = delimiters[index];
+
+            if (delimiter.CanOpen && delimiter.Char == closer.Char && !OddMatch(delimiter, closer))
+            {
+                return index;
+            }
+        }
+
+        return -1;
+    }
+}

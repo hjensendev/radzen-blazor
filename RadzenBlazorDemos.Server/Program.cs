@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.Web;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
+using Microsoft.Extensions.Options;
 using Radzen;
 using RadzenBlazorDemos;
 using RadzenBlazorDemos.Data;
@@ -10,6 +11,7 @@ using RadzenBlazorDemos.Services;
 var builder = WebApplication.CreateBuilder(args);
 
 // Add services to the container.
+builder.Services.AddControllers();
 builder.Services.AddRazorPages();
 builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents().AddHubOptions(o =>
@@ -26,6 +28,7 @@ builder.Services.AddSingleton(sp =>
 });
 
 // Add Radzen.Blazor services
+builder.Services.AddScoped<ILocalizer, DemoLocalizer>();
 builder.Services.AddRadzenComponents();
 builder.Services.AddRadzenQueryStringThemeService();
 
@@ -35,9 +38,12 @@ builder.Services.AddScoped<ExampleService>();
 
 builder.Services.AddDbContextFactory<NorthwindContext>();
 
-builder.Services.AddScoped<NorthwindService>();
 builder.Services.AddScoped<NorthwindODataService>();
 builder.Services.AddSingleton<GitHubService>();
+
+builder.Services.AddAIChatService(options =>
+    builder.Configuration.GetSection("AIChatService").Bind(options));
+
 
 builder.Services.AddLocalization();
 
@@ -56,6 +62,49 @@ builder.Services.Configure<RequestLocalizationOptions>(options =>
 */
 
 var app = builder.Build();
+
+// Content Security Policy
+var relaxedCspPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+{
+    "/datagrid-rowreorder",
+    "/datagrid-rowdragbetween",
+    "/datagrid-rowdrag-scheduler",
+    "/tree-dragdrop",
+};
+
+var baseCsp = string.Join("; ",
+    "base-uri 'self'",
+    "default-src 'self' http://localhost:* ws://localhost:*",
+    "connect-src 'self' https: wss: http://localhost:* ws://localhost:*",
+    "img-src data: https:",
+    "object-src 'none'",
+    "script-src 'self' http://localhost:* cdnjs.cloudflare.com cdn.syndication.twimg.com platform.linkedin.com www.linkedin.com analytics.radzen.com maps.googleapis.com unpkg.com",
+    "style-src 'self' 'unsafe-inline' cdnjs.cloudflare.com maps.googleapis.com fonts.googleapis.com fonts.gstatic.com",
+    "font-src 'self' data: cdnjs.cloudflare.com maps.googleapis.com fonts.googleapis.com fonts.gstatic.com",
+    "frame-src blocks.radzen.com www.youtube.com platform.twitter.com platform.linkedin.com www.linkedin.com",
+    "worker-src 'self' blob:",
+    "upgrade-insecure-requests");
+
+var relaxedCsp = string.Join("; ",
+    "base-uri 'self'",
+    "default-src 'self' http://localhost:* ws://localhost:*",
+    "connect-src 'self' https: wss: http://localhost:* ws://localhost:*",
+    "img-src data: https:",
+    "object-src 'none'",
+    "script-src 'self' 'unsafe-inline' 'unsafe-eval' http://localhost:* cdnjs.cloudflare.com cdn.syndication.twimg.com platform.linkedin.com www.linkedin.com analytics.radzen.com maps.googleapis.com unpkg.com",
+    "style-src 'self' 'unsafe-inline' cdnjs.cloudflare.com maps.googleapis.com fonts.googleapis.com fonts.gstatic.com",
+    "font-src 'self' data: cdnjs.cloudflare.com maps.googleapis.com fonts.googleapis.com fonts.gstatic.com",
+    "frame-src blocks.radzen.com www.youtube.com platform.twitter.com platform.linkedin.com www.linkedin.com",
+    "worker-src 'self' blob:",
+    "upgrade-insecure-requests");
+
+app.Use(async (context, next) =>
+{
+    var csp = relaxedCspPaths.Contains(context.Request.Path.Value) ? relaxedCsp : baseCsp;
+    context.Response.Headers["Content-Security-Policy"] = csp;
+    await next();
+});
+
 // Configure the HTTP request pipeline.
 if (!app.Environment.IsDevelopment())
 {
@@ -72,14 +121,14 @@ app.UseRequestLocalization(new RequestLocalizationOptions
     SupportedUICultures = supportedCultures
 });
 */
-
+app.UseWhen(context => !context.Request.Path.StartsWithSegments("/api"), branch => branch.UseStatusCodePagesWithReExecute("/not-found"));
 app.UseHttpsRedirection();
 app.UseStaticFiles();
 app.UseRouting();
 app.UseAntiforgery();
 app.MapRazorPages();
 app.MapRazorComponents<RadzenBlazorDemos.Server.App>()
-    .AddInteractiveServerRenderMode().AddAdditionalAssemblies(typeof(RadzenBlazorDemos.App).Assembly);
+    .AddInteractiveServerRenderMode().AddAdditionalAssemblies(typeof(RadzenBlazorDemos.Routes).Assembly);
 app.MapControllers();
 
 app.Run();

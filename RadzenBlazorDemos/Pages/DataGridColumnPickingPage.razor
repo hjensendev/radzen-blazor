@@ -1,17 +1,15 @@
-﻿@page "/datagrid-column-picker"
+@page "/datagrid-column-picker"
 
 <RadzenText TextStyle="TextStyle.H2" TagName="TagName.H1" class="rz-pt-8">
-    DataGrid <strong>Column Picker</strong>
+    Blazor DataGrid <strong>Column Picker</strong>
 </RadzenText>
 <RadzenText TextStyle="TextStyle.Subtitle1" TagName="TagName.P" class="rz-pb-4">
-    Enable default column picker by setting the <strong>AllowColumnPicking</strong> grid property to true.
-    You can disable picking for specific columns by setting their <strong>Pickable</strong> property to false.
-    The example below also sets <strong>ColumnsPickerAllowFiltering</strong> on the grid to make picking columns easier.
+    Add a column picker to a Blazor DataGrid so users can show and hide columns at runtime to focus on the data they care about.
 </RadzenText>
 <RadzenText TextStyle="TextStyle.Subtitle1" TagName="TagName.P" class="rz-pb-4">
     Documentation:
-    <a href="https://blazor.radzen.com/docs/api/Radzen.Blazor.RadzenDataGrid-1.html">grid</a>,
-    <a href="https://blazor.radzen.com/docs/api/Radzen.Blazor.RadzenDataGridColumn-1.html">column</a>.
+    <a href="/docs/api/Radzen.Blazor.RadzenDataGrid-1">grid</a>,
+    <a href="/docs/api/Radzen.Blazor.RadzenDataGridColumn-1">column</a>.
 </RadzenText>
 
 <RadzenExample ComponentName="DataGrid" Example="DataGridColumnPicking">
@@ -29,4 +27,16 @@
 
 <RadzenExample ComponentName="DataGrid" Example="DataGridColumnPickingContextMenu">
     <DataGridColumnPickingContextMenu />
+</RadzenExample>
+
+<RadzenText TextStyle="TextStyle.H3" TagName="TagName.H2" class="rz-pt-8">
+    Picking columns with <strong>Sorting</strong>
+</RadzenText>
+
+<RadzenText TextStyle="TextStyle.Subtitle1" TagName="TagName.P" class="rz-pb-4">
+    You can also add sorting to the column picker so that users can view the columns in descending or ascending order.
+</RadzenText>
+
+<RadzenExample ComponentName="DataGrid" Example="DataGridColumnPickingAllowSorting">
+    <DataGridColumnPickingAllowSorting />
 </RadzenExample>

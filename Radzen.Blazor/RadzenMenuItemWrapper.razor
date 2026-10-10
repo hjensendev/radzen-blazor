@@ -1,24 +1,35 @@
 @using Microsoft.AspNetCore.Components.Routing
+@using Microsoft.AspNetCore.Components.Web
 @using Microsoft.JSInterop
 @inherits RadzenComponentWithChildren
 
-@if (Item.Parent.ClickToOpen)
+@if (Item?.Parent?.ClickToOpen == true)
 {
-    <li style=@Style @attributes="@Attributes" @onclick="@Item.OnClick" @onclick:stopPropagation>
+    <li style=@Style @attributes="@Attributes" @onclick="@Item.OnClick" @onclick:stopPropagation role="menuitem"
+        tabindex="@TabIndex" aria-disabled="@(Item?.Disabled == true ? "true" : "false")"
+        aria-haspopup="@(Item?.ChildContent != null ? "menu" : null)"
+        aria-controls="@Item?.SubmenuId"
+        aria-expanded="@ExpandedAttribute">
         @ChildContent
     </li>
 }
 else
 {
-    if (Item.ChildContent != null)
+    if (Item?.ChildContent != null)
     {
-        <li style=@Style @attributes="@Attributes" onmouseenter="Radzen.toggleMenuItem(this, event, true, false)" onmouseleave="Radzen.toggleMenuItem(this, event, false, false)">
+        <li style=@Style @attributes="@Attributes"
+            role="menuitem" tabindex="@TabIndex" aria-disabled="@(Item?.Disabled == true ? "true" : "false")"
+            aria-haspopup="menu" aria-controls="@Item?.SubmenuId" aria-expanded="@ExpandedAttribute">
             @ChildContent
         </li>
     }
     else
     {
-        <li style=@Style @attributes="@Attributes" @onclick="@Item.OnClick" @onclick:stopPropagation>
+        <li style=@Style @attributes="@Attributes" @onclick="@(Item!.OnClick)" @onclick:stopPropagation role="menuitem"
+            tabindex="@TabIndex" aria-disabled="@(Item?.Disabled == true ? "true" : "false")"
+            aria-haspopup="@(Item?.ChildContent != null ? "menu" : null)"
+            aria-controls="@Item?.SubmenuId"
+            aria-expanded="@ExpandedAttribute">
             @ChildContent
         </li>
     }
@@ -31,5 +42,9 @@ else
     /// </summary>
     /// <value>The menu item.</value>
     [Parameter]
-    public RadzenMenuItem Item { get; set; }
+    public RadzenMenuItem? Item { get; set; }
+
+    int TabIndex => -1;
+
+    string? ExpandedAttribute => Item?.ChildContent != null ? (Item.Expanded ? "true" : "false") : null;
 }

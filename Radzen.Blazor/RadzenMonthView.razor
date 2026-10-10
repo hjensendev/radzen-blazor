@@ -6,22 +6,21 @@
 @code {
     public override RenderFragment Render()
     {
-        var appointments = Scheduler.GetAppointmentsInRange(StartDate, EndDate);
+        var appointments = Scheduler?.GetAppointmentsInRange(StartDate, EndDate) ?? Enumerable.Empty<AppointmentData>();
 
-        var maxAppointmentsInSlot = 0;
-
-        if (MaxAppointmentsInSlot != null)
+        if (HasResourceGroups)
         {
-            maxAppointmentsInSlot = MaxAppointmentsInSlot.Value;
-        }
-        else
-        {
-            var slotHeight = (Scheduler.Height - 60) / 6;
-            maxAppointmentsInSlot = Convert.ToInt32(Math.Floor(slotHeight / 24)) - 1;
+            return @<CascadingValue Value=@Scheduler>
+                <ResourceGroups Types=@ResourceTypes Orientation=@GroupOrientation>
+                    <ChildContent Context="path">
+                        <MonthView StartDate=@StartDate EndDate=@EndDate MaxAppointmentsInSlot=@MaxAppointmentsInSlot MoreText=@MoreText Appointments=@AppointmentsForResources(appointments, path) Resources=@path AppointmentMove=OnAppointmentMove />
+                    </ChildContent>
+                </ResourceGroups>
+            </CascadingValue>;
         }
 
         return @<CascadingValue Value=@Scheduler>
-            <MonthView StartDate=@StartDate EndDate=@EndDate MaxAppointmentsInSlot=@maxAppointmentsInSlot MoreText=@MoreText Appointments=@appointments AppointmentMove=OnAppointmentMove />
+            <MonthView StartDate=@StartDate EndDate=@EndDate MaxAppointmentsInSlot=@MaxAppointmentsInSlot MoreText=@MoreText Appointments=@appointments AppointmentMove=OnAppointmentMove />
         </CascadingValue>;
     }
 }

@@ -1,8 +1,10 @@
 ﻿using Microsoft.AspNetCore.Http;
+using System.Linq;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Hosting;
 using System;
 using System.IO;
+using System.Threading.Tasks;
 
 namespace RadzenBlazorDemos
 {
@@ -16,7 +18,34 @@ namespace RadzenBlazorDemos
             this.environment = environment;
         }
 
-        [HttpPost("upload/single")]
+        // SVG is excluded because it can carry script.
+        static readonly string[] AllowedImageExtensions =
+        {
+            ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp",
+        };
+
+        [HttpPut("api/upload/stream")]
+        public async Task<IActionResult> Stream()
+        {
+            try
+            {
+                // Put your code here
+                
+                using (var ms = new MemoryStream())
+                {
+                    await Request.Body.CopyToAsync(ms);
+                    byte[] fileBytes = ms.ToArray();
+                    
+                    return Ok(new { Completed = true, fileSize = fileBytes.Length });
+                }
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, ex.Message);
+            }
+        }
+        
+        [HttpPost("api/upload/single")]
         public IActionResult Single(IFormFile file)
         {
             try
@@ -30,7 +59,7 @@ namespace RadzenBlazorDemos
             }
         }
 
-        [HttpPost("upload/image")]
+        [HttpPost("api/upload/image")]
         public IActionResult Image(IFormFile file)
         {
             try
@@ -38,7 +67,14 @@ namespace RadzenBlazorDemos
                 // Used for demo purposes only
                 DeleteOldFiles();
 
-                var fileName = $"upload-{DateTime.Today.ToString("yyyy-MM-dd")}-{Guid.NewGuid()}{Path.GetExtension(file.FileName)}";
+                var extension = Path.GetExtension(file.FileName);
+
+                if (!AllowedImageExtensions.Contains(extension, StringComparer.OrdinalIgnoreCase))
+                {
+                    return BadRequest("Only image files can be uploaded.");
+                }
+
+                var fileName = $"upload-{DateTime.Today.ToString("yyyy-MM-dd")}-{Guid.NewGuid()}{extension}";
 
                 using (var stream = new FileStream(Path.Combine(environment.WebRootPath, fileName), FileMode.Create))
                 {
@@ -46,7 +82,7 @@ namespace RadzenBlazorDemos
                     file.CopyTo(stream);
 
                     // Return the URL of the file
-                    var url = Url.Content($"~/{fileName}");
+                    var url = Url.Content($"~/images/{fileName}");
 
                     return Ok(new { Url = url });
                 }
@@ -77,7 +113,7 @@ namespace RadzenBlazorDemos
             }
         }
 
-        [HttpPost("upload/multiple")]
+        [HttpPost("api/upload/multiple")]
         public IActionResult Multiple(IFormFile[] files)
         {
             try
@@ -91,13 +127,15 @@ namespace RadzenBlazorDemos
             }
         }
 
-        [HttpPost("upload/{id}")]
-        public IActionResult Post(IFormFile[] files, int id)
+        [HttpPost("api/upload/custom-header")]
+        public IActionResult CustomHeader(IFormFile file)
         {
             try
             {
-                // Put your code here
-                return StatusCode(200);
+                var uploadedBy = Request.Headers["X-Uploaded-By"].ToString();
+                var authorization = Request.Headers["Authorization"].ToString();
+
+                return Ok(new { uploadedBy, authorization});
             }
             catch (Exception ex)
             {
@@ -105,7 +143,20 @@ namespace RadzenBlazorDemos
             }
         }
 
-        [HttpPost("upload/specific")]
+        [HttpPost("api/upload/{id}")]
+        public IActionResult Post(IFormFile[] files, int id, [FromQuery] string query)
+        {
+            try
+            {
+                return Ok(new { id, query});
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, ex.Message);
+            }
+        }
+
+        [HttpPost("api/upload/specific")]
         public IActionResult Specific(IFormFile myName)
         {
             try

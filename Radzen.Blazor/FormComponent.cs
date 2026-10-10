@@ -12,18 +12,20 @@ using Radzen.Blazor.Rendering;
 namespace Radzen
 {
     /// <summary>
-    /// Class FormComponentWithAutoComplete.
+    /// Base class for form input components that support browser autocomplete functionality.
+    /// Extends <see cref="FormComponent{T}"/> with properties for controlling browser autocomplete behavior and ARIA autocomplete attributes.
+    /// Used by input components like RadzenTextBox, RadzenPassword, RadzenNumeric, and RadzenMask.
+    /// Provides standardized autocomplete behavior for better integration with browser password managers and autofill features.
     /// </summary>
+    /// <typeparam name="T">The type of the form component's value.</typeparam>
     public class FormComponentWithAutoComplete<T> : FormComponent<T>
     {
         /// <summary>
-        /// Gets or sets a value indicating the type of built-in autocomplete
-        /// the browser should use.
-        /// <see cref="Blazor.AutoCompleteType" />
+        /// Gets or sets the browser autocomplete behavior for this input field.
+        /// Controls whether browsers should offer to autofill this field based on user history or saved data.
+        /// Common values include On (enable), Off (disable), Username, CurrentPassword, Email, etc.
         /// </summary>
-        /// <value>
-        /// The type of built-in autocomplete.
-        /// </value>
+        /// <value>The autocomplete type. Default is <see cref="AutoCompleteType.On"/>.</value>
         [Parameter]
         public virtual AutoCompleteType AutoCompleteType { get; set; } = AutoCompleteType.On;
 
@@ -37,8 +39,30 @@ namespace Radzen
         /// AutoCompleteType.</value>
         public virtual string AutoCompleteAttribute
         {
-            get => Attributes != null && Attributes.ContainsKey("AutoComplete") && $"{Attributes["AutoComplete"]}".ToLower() == "false" ? DefaultAutoCompleteAttribute :
-                Attributes != null && Attributes.ContainsKey("AutoComplete") ? Attributes["AutoComplete"] as string ?? AutoCompleteType.GetAutoCompleteValue() : AutoCompleteType.GetAutoCompleteValue();
+            get
+            {
+                if (Attributes != null && Attributes.TryGetValue("AutoComplete", out var value))
+                {
+                    var v = (object?)value;
+                    var autoCompleteValue = v switch
+                    {
+                        bool boolValue => boolValue
+                            ? AutoCompleteType.GetAutoCompleteValue()
+                            : DefaultAutoCompleteAttribute,
+                        string stringValue when bool.TryParse(stringValue, out var boolValue) => boolValue
+                            ? AutoCompleteType.GetAutoCompleteValue()
+                            : DefaultAutoCompleteAttribute,
+                        AutoCompleteType typeValue => typeValue.GetAutoCompleteValue(),
+                        _ => value != null ? value.ToString() ?? AutoCompleteType.GetAutoCompleteValue() : AutoCompleteType.GetAutoCompleteValue()
+                    };
+
+                    return string.Equals(autoCompleteValue, "false", StringComparison.OrdinalIgnoreCase)
+                        ? DefaultAutoCompleteAttribute
+                        : autoCompleteValue;
+                }
+
+                return AutoCompleteType.GetAutoCompleteValue();
+            }
         }
 
         /// <summary>
@@ -46,18 +70,25 @@ namespace Radzen
         /// </summary>
         public virtual string DefaultAutoCompleteAttribute { get; set; } = "off";
 
-        object ariaAutoComplete;
+        object? ariaAutoComplete;
 
         /// <inheritdoc />
         public override async Task SetParametersAsync(ParameterView parameters)
         {
-            parameters = parameters.TryGetValue("aria-autocomplete", out ariaAutoComplete) ?
-                ParameterView.FromDictionary(parameters
-                    .ToDictionary().Where(i => i.Key != "aria-autocomplete").ToDictionary(i => i.Key, i => i.Value)
-                    .ToDictionary(i => i.Key, i => i.Value))
-                : parameters;
+            if (parameters.TryGetValue("aria-autocomplete", out ariaAutoComplete))
+            {
+                var filtered = new Dictionary<string, object?>();
+                foreach (var p in parameters)
+                {
+                    if (p.Name != "aria-autocomplete")
+                    {
+                        filtered[p.Name] = p.Value;
+                    }
+                }
+                parameters = ParameterView.FromDictionary(filtered);
+            }
 
-            await base.SetParametersAsync(parameters);
+            await base.SetParametersAsync(parameters).ConfigureAwait(false);
         }
 
         /// <summary>
@@ -68,34 +99,42 @@ namespace Radzen
         /// <summary>
         /// Gets the aria-autocomplete attribute's string value.
         /// </summary>
-        public virtual string AriaAutoCompleteAttribute
+        public virtual string? AriaAutoCompleteAttribute
         {
-            get => AutoCompleteAttribute == DefaultAutoCompleteAttribute ? DefaultAriaAutoCompleteAttribute : ariaAutoComplete as string;
+            get => string.Equals(AutoCompleteAttribute, DefaultAutoCompleteAttribute, StringComparison.Ordinal)
+                ? DefaultAriaAutoCompleteAttribute
+                : ariaAutoComplete as string;
         }
 
     }
 
     /// <summary>
-    /// Class FormComponent.
-    /// Implements the <see cref="Radzen.RadzenComponent" />
-    /// Implements the <see cref="Radzen.IRadzenFormComponent" />
+    /// Base class for all Radzen form input components providing data binding, validation, and change event capabilities.
+    /// FormComponent integrates with Blazor's EditContext for form validation and provides common functionality for all input controls.
+    /// This is the base class for components like RadzenTextBox, RadzenCheckBox, RadzenDropDown, RadzenDatePicker, etc.
+    /// Provides @bind-Value support for two-way binding, integration with Blazor EditContext and validators, Change and ValueChanged callbacks,
+    /// Disable property to prevent user interaction, Placeholder text for empty inputs, Name property for validation and label association,
+    /// and TabIndex for keyboard navigation control.
+    /// Components inheriting from FormComponent automatically work with RadzenTemplateForm and validators.
     /// </summary>
-    /// <typeparam name="T"></typeparam>
-    /// <seealso cref="Radzen.RadzenComponent" />
-    /// <seealso cref="Radzen.IRadzenFormComponent" />
+    /// <typeparam name="T">The type of the component's bound value (string, int, DateTime, etc.).</typeparam>
     public class FormComponent<T> : RadzenComponent, IRadzenFormComponent
     {
         /// <summary>
-        /// Gets or sets the name.
+        /// Gets or sets the unique name identifier for this form component.
+        /// Used for validation association (linking with validators and labels) and for identifying the field in form submission.
+        /// This name should be unique within the form and match the Component property of associated validators/labels.
         /// </summary>
-        /// <value>The name.</value>
+        /// <value>The component name.</value>
         [Parameter]
-        public string Name { get; set; }
+        public string? Name { get; set; }
 
         /// <summary>
-        /// Gets or sets the index of the tab.
+        /// Gets or sets the tab order index for keyboard navigation.
+        /// Controls the order in which fields receive focus when the user presses the Tab key.
+        /// Lower values receive focus first. Use -1 to exclude from tab navigation.
         /// </summary>
-        /// <value>The index of the tab.</value>
+        /// <value>The tab index. Default is 0 (natural tab order).</value>
         [Parameter]
         public int TabIndex { get; set; } = 0;
 
@@ -104,7 +143,7 @@ namespace Radzen
         /// </summary>
         /// <value>The placeholder.</value>
         [Parameter]
-        public string Placeholder { get; set; }
+        public string? Placeholder { get; set; }
 
         /// <summary>
         /// Gets or sets a value indicating whether this <see cref="FormComponent{T}"/> is disabled.
@@ -116,21 +155,21 @@ namespace Radzen
         /// <summary>
         /// The form
         /// </summary>
-        IRadzenForm _form;
+        IRadzenForm? _form;
 
         /// <summary>
         /// Gets or sets the edit context.
         /// </summary>
         /// <value>The edit context.</value>
         [CascadingParameter]
-        public EditContext EditContext { get; set; }
+        public EditContext? EditContext { get; set; }
 
         /// <summary>
         /// Gets or sets the form.
         /// </summary>
         /// <value>The form.</value>
         [CascadingParameter]
-        public IRadzenForm Form
+        public IRadzenForm? Form
         {
             get
             {
@@ -181,14 +220,14 @@ namespace Radzen
         /// <summary>
         /// The value
         /// </summary>
-        protected T _value;
+        protected T? _value;
 
         /// <summary>
         /// Gets or sets the value.
         /// </summary>
         /// <value>The value.</value>
         [Parameter]
-        public virtual T Value
+        public virtual T? Value
         {
             get
             {
@@ -214,13 +253,15 @@ namespace Radzen
         /// Gets the field identifier.
         /// </summary>
         /// <value>The field identifier.</value>
-        public FieldIdentifier FieldIdentifier { get; private set; }
+        [Parameter]
+        public FieldIdentifier FieldIdentifier { get; set; }
+
         /// <summary>
         /// Gets or sets the value expression.
         /// </summary>
         /// <value>The value expression.</value>
         [Parameter]
-        public Expression<Func<T>> ValueExpression { get; set; }
+        public Expression<Func<T>>? ValueExpression { get; set; }
         /// <summary>
         /// Sets the parameters asynchronous.
         /// </summary>
@@ -252,7 +293,7 @@ namespace Radzen
         /// </summary>
         /// <param name="sender">The sender.</param>
         /// <param name="e">The <see cref="ValidationStateChangedEventArgs"/> instance containing the event data.</param>
-        private void ValidationStateChanged(object sender, ValidationStateChangedEventArgs e)
+        private void ValidationStateChanged(object? sender, ValidationStateChangedEventArgs e)
         {
             StateHasChanged();
         }
@@ -270,19 +311,46 @@ namespace Radzen
             }
 
             Form?.RemoveComponent(this);
+
+            GC.SuppressFinalize(this);
         }
 
         /// <summary>
         /// Gets the value.
         /// </summary>
         /// <returns>System.Object.</returns>
-        public object GetValue()
+        public object? GetValue()
         {
             return Value;
         }
 
         /// <summary>
-        /// Handles the <see cref="E:ContextMenu" /> event.
+        /// Notifies the <see cref="EditContext"/> that the field has changed while validators observe the specified value.
+        /// The stored value is restored afterwards so that two-way binding parameter re-flow keeps working as expected.
+        /// </summary>
+        /// <param name="value">The value validators should observe during the notification.</param>
+        protected void NotifyFieldChanged(T? value)
+        {
+            if (FieldIdentifier.FieldName == null || EditContext == null)
+            {
+                return;
+            }
+
+            var current = _value;
+            _value = value;
+
+            try
+            {
+                EditContext.NotifyFieldChanged(FieldIdentifier);
+            }
+            finally
+            {
+                _value = current;
+            }
+        }
+
+        /// <summary>
+        /// Handles the ContextMenu event.
         /// </summary>
         /// <param name="args">The <see cref="MouseEventArgs"/> instance containing the event data.</param>
         /// <returns>Task.</returns>
@@ -308,10 +376,10 @@ namespace Radzen
 
         /// <summary> Provides support for RadzenFormField integration. </summary>
         [CascadingParameter]
-        public IFormFieldContext FormFieldContext { get; set; }
+        public IFormFieldContext? FormFieldContext { get; set; }
 
         /// <summary> Gets the current placeholder. Returns empty string if this component is inside a RadzenFormField.</summary>
-        protected string CurrentPlaceholder => FormFieldContext?.AllowFloatingLabel == true ? " " : Placeholder;
+        protected string? CurrentPlaceholder => FormFieldContext?.AllowFloatingLabel == true ? " " : Placeholder;
 
         /// <inheritdoc/>
         public virtual async ValueTask FocusAsync()

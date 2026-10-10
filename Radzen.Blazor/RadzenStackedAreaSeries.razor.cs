@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using Microsoft.AspNetCore.Components;
 using Radzen.Blazor.Rendering;
 using System;
@@ -9,21 +10,44 @@ namespace Radzen.Blazor
     /// <summary>
     /// Renders stacked area series in <see cref="RadzenChart" />.
     /// </summary>
-    public partial class RadzenStackedAreaSeries<TItem> : CartesianSeries<TItem>, IChartStackedAreaSeries
+    public partial class RadzenStackedAreaSeries<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.PublicFields)] TItem> : CartesianSeries<TItem>, IChartStackedAreaSeries
     {
         /// <summary>
         /// Specifies the color of the line.
         /// </summary>
         /// <value>The stroke.</value>
         [Parameter]
-        public string Stroke { get; set; }
+        public string? Stroke { get; set; }
 
         /// <summary>
         /// Specifies the fill (background color) of the area series.
+        /// When <see cref="FillMode"/> is <see cref="FillMode.Gradient"/> this color is used as the gradient base color.
         /// </summary>
         /// <value>The fill.</value>
         [Parameter]
-        public string Fill { get; set; }
+        public string? Fill { get; set; }
+
+        /// <summary>
+        /// Specifies how the area is filled. Set to <see cref="FillMode.Solid"/> by default.
+        /// Use <see cref="FillMode.Gradient"/> for a fill that fades toward the baseline, or <see cref="FillMode.None"/> to render only the line.
+        /// </summary>
+        /// <value>The fill mode. Default is <see cref="FillMode.Solid"/>.</value>
+        [Parameter]
+        public FillMode FillMode { get; set; } = FillMode.Solid;
+
+        /// <summary>
+        /// Specifies the opacity at the top of the gradient fill. Used when <see cref="FillMode"/> is <see cref="FillMode.Gradient"/>.
+        /// </summary>
+        /// <value>The gradient start opacity. Default is <c>0.75</c>.</value>
+        [Parameter]
+        public double GradientStartOpacity { get; set; } = 0.75;
+
+        /// <summary>
+        /// Specifies the opacity at the baseline of the gradient fill. Used when <see cref="FillMode"/> is <see cref="FillMode.Gradient"/>.
+        /// </summary>
+        /// <value>The gradient end opacity. Default is <c>0.35</c>.</value>
+        [Parameter]
+        public double GradientEndOpacity { get; set; } = 0.35;
 
         /// <summary>
         /// Gets or sets the pixel width of the line. Set to <c>2</c> by default.
@@ -59,7 +83,7 @@ namespace Radzen.Blazor
         {
             get
             {
-                return Stroke;
+                return Stroke ?? string.Empty;
             }
         }
 
@@ -86,6 +110,16 @@ namespace Radzen.Blazor
         /// <inheritdoc />
         public override bool Contains(double x, double y, double tolerance)
         {
+            if (Chart == null)
+            {
+                return false;
+            }
+
+            if (Chart == null)
+            {
+                return false;
+            }
+
             var category = ComposeCategory(Chart.CategoryScale);
             var value = ComposeValue(Chart.ValueScale);
 
@@ -169,7 +203,7 @@ namespace Radzen.Blazor
                 return GetPointsAt(index - 1, category, value, valueScale).Reverse();
             }
 
-            var valueTicks = valueScale.Ticks(Chart.ValueAxis.TickDistance);
+            var valueTicks = Chart?.ValueAxis != null ? valueScale.Ticks(Chart.ValueAxis.TickDistance) : default;
             var start = Math.Max(0, valueTicks.Start);
 
             return Items.Select(item =>
@@ -190,6 +224,11 @@ namespace Radzen.Blazor
         /// <inheritdoc />
         internal override double TooltipY(TItem item)
         {
+            if (Chart == null)
+            {
+                return 0;
+            }
+
             var category = ComposeCategory(Chart.CategoryScale);
             var value = ComposeValue(Chart.ValueScale);
             var x = category(item);
@@ -214,13 +253,15 @@ namespace Radzen.Blazor
                     throw new NotSupportedException($"Interpolation {Interpolation} is not supported yet.");
             }
         }
-        private IList<IChartSeries> AreaSeries => Chart.Series.Where(series => series is IChartStackedAreaSeries).Cast<IChartSeries>().ToList();
+        private IList<IChartSeries> AreaSeries => Chart?.Series?.Where(series => series is IChartStackedAreaSeries).Cast<IChartSeries>().ToList() ?? new List<IChartSeries>();
         private IList<IChartSeries> VisibleColumnSeries => AreaSeries.Where(series => series.Visible).ToList();
         private IList<IChartStackedAreaSeries> StackedAreaSeries => VisibleColumnSeries.Cast<IChartStackedAreaSeries>().ToList();
 
         /// <inheritdoc />
         public override ScaleBase TransformValueScale(ScaleBase scale)
         {
+            ArgumentNullException.ThrowIfNull(scale);
+
             if (Items.Any())
             {
                 var stackedAreaSeries = StackedAreaSeries;
@@ -232,7 +273,7 @@ namespace Radzen.Blazor
                     var max = sums.Max();
                     var min = Items.Min(Value);
 
-                    scale.Input.MergeWidth(new ScaleRange { Start = min, End = max });
+                    scale.Input.MergeWidth(new ScaleRange { Start = Math.Min(0, min), End = Math.Max(0, max) });
                 }
                 else
                 {
@@ -252,7 +293,7 @@ namespace Radzen.Blazor
                     return 0;
                 }
 
-                return Items.Count();
+                return Items.Count;
             }
         }
 
@@ -263,7 +304,7 @@ namespace Radzen.Blazor
                 return Enumerable.Empty<double>();
             }
 
-            var category = ComposeCategory(Chart.CategoryScale);
+            var category = Chart != null ? ComposeCategory(Chart.CategoryScale) : (Func<TItem, double>)(item => 0);
 
             return Items.Where(item => category(item) == value).Select(Value);
         }

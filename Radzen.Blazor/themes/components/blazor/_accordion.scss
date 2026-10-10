@@ -31,26 +31,23 @@ $accordion-shadow: none !default;
   box-sizing: border-box;
   border-radius: var(--rz-accordion-border-radius);
   box-shadow: var(--rz-accordion-shadow);
+  overflow: hidden;
 
   & > div:first-child {
     border-radius: var(--rz-accordion-border-radius) var(--rz-accordion-border-radius) 0 0;
   }
 
-  & > div:last-child,
-  & > div:last-child > div {
+  & > div:nth-last-child(2):has(+.rz-state-collapsed),
+  & > div:nth-last-child(2):has(+.rz-state-collapsed) > div {
+    border-radius: 0 0 var(--rz-accordion-border-radius) var(--rz-accordion-border-radius);
+  }
+
+  & > div:last-child .rz-accordion-content {
     border-radius: 0 0 var(--rz-accordion-border-radius) var(--rz-accordion-border-radius);
   }
 
   & > div:only-child {
     border-radius: var(--rz-accordion-border-radius);
-  }
-
-  &:focus {
-    outline: var(--rz-outline-normal);
-  }
-
-  &:focus-visible {
-    outline: var(--rz-accordion-item-focus-outline);
   }
 
   .rz-accordion-header {
@@ -61,7 +58,8 @@ $accordion-shadow: none !default;
       border-top: var(--rz-accordion-item-border)
     }
 
-    > a {
+    > a,
+    > button {
       padding-block: var(--rz-accordion-item-padding-block);
       padding-inline: var(--rz-accordion-item-padding-inline);
       color: var(--rz-accordion-item-color);
@@ -72,6 +70,13 @@ $accordion-shadow: none !default;
       font-size: var(--rz-accordion-item-font-size);
       font-weight: var(--rz-accordion-item-font-weight);
       cursor: pointer;
+      background: none;
+      border: none;
+
+      &:focus,
+      &:focus-visible {
+        outline: none;
+      }
 
       &:hover {
         color: var(--rz-accordion-hover-color);
@@ -80,17 +85,22 @@ $accordion-shadow: none !default;
       span:not(.rz-accordion-toggle-icon) {
         flex-grow: 1;
       }
+
+      > .rzi {
+        font-size: var(--rz-accordion-icon-font-size);
+        margin-inline: var(--rz-accordion-icon-margin-inline);
+      }
     }
 
-    :focus-visible &.rz-state-focused {
+    &:has(> a:focus-visible),
+    &:has(> button:focus-visible) {
       outline: var(--rz-accordion-item-focus-outline);
       outline-offset: var(--rz-accordion-item-focus-outline-offset);
     }
+  }
 
-    .rzi {
-      font-size: var(--rz-accordion-icon-font-size);
-      margin-inline: var(--rz-accordion-icon-margin-inline);
-    }
+  > .rz-expander {
+    background-color: var(--rz-accordion-item-background-color);
   }
 }
 
@@ -104,21 +114,15 @@ $accordion-shadow: none !default;
     margin-inline: var(--rz-accordion-toggle-icon-margin-inline);
   }
 
-  &.rzi-chevron-right {
-    &:before {
-      content: $accordion-toggle-icon-collapsed;
-    }
+  &.rz-state-expanded {
+    transform: rotate(180deg);
+    transition: transform var(--rz-transition);
   }
 
-  &.rzi-chevron-down {
-    &:before {
-      content: $accordion-toggle-icon-expanded;
-    }
+  &.rz-state-collapsed {
+    transform: rotate(0);
+    transition: transform var(--rz-transition);
   }
-}
-
-.rz-accordion-content-wrapper-overflown {
-  overflow: hidden;
 }
 
 .rz-accordion-content {

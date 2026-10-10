@@ -1,25 +1,23 @@
 ﻿@typeparam TItem
 
-@if (!DataList.WrapItems)
+@if (DataList != null && !DataList.WrapItems)
 {
-    <ul class="rz-datalist-data">
-        <li>
-            @if (DataList.Template != null)
-            {
-                @DataList.Template(Item)
-            }
-            else
-            {
-                <span>Template</span>
-            }
-        </li>
-    </ul>
+    <li>
+        @if (DataList.Template != null)
+        {
+            @DataList.Template(Item!)
+        }
+        else
+        {
+            <span>Template</span>
+        }
+    </li>
 }
 else
 {
-    @if (DataList.Template != null)
+    @if (DataList?.Template != null)
     {
-        @DataList.Template(Item)
+        @DataList.Template(Item!)
     }
     else
     {
@@ -29,8 +27,8 @@ else
 
 @code {
     [Parameter]
-    public RadzenDataList<TItem> DataList { get; set; }
+    public RadzenDataList<TItem>? DataList { get; set; }
 
     [Parameter]
-    public TItem Item { get; set; }
+    public TItem? Item { get; set; }
 }

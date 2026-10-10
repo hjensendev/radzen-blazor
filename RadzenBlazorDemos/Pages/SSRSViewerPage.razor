@@ -1,12 +1,17 @@
-﻿@page "/ssrsviewer"
-@page "/docs/guides/components/ssrsviewer.html"
+@page "/ssrsviewer"
+
+<PageTitle>Blazor SSRS Viewer - Reporting Services Reports | Free Radzen Blazor</PageTitle>
+<HeadContent>
+    <meta name="description" content="Display SQL Server Reporting Services (SSRS) reports in a Blazor app with the Radzen SSRS Viewer, including report parameters and a proxy for credentials.">
+</HeadContent>
 
 <RadzenText TextStyle="TextStyle.H2" TagName="TagName.H1" class="rz-pt-8">
-    SSRS Viewer
+    Blazor SSRS Viewer
 </RadzenText>
 <RadzenText TextStyle="TextStyle.Subtitle1" TagName="TagName.P" class="rz-pb-4">
     RadzenSSRSViewer displays a report created in SQL Server Reporting Services (SSRS).
 </RadzenText>
+
 <RadzenAlert AlertStyle="AlertStyle.Info" Variant="Variant.Flat" Shade="Shade.Lighter" AllowClose="false" class="rz-mb-12">
     There is no live demo of RadzenSSRSViewer because hosting a public SSRS server is not a trivial task.
 </RadzenAlert>
@@ -40,7 +45,7 @@ Often SSRS reports have parameters. You can specify those via the <code>Paramete
 <RadzenText Anchor="ssrsviewer#proxy" TextStyle="TextStyle.H5" TagName="TagName.H2" class="rz-mt-12 rz-mb-4">Proxy</RadzenText>
 <RadzenText TextStyle="TextStyle.Body1" class="rz-mb-8">
 Often your report server won't be exposed to the public Internet or you would want to either hide report parameters or provide security credentials. In this case you can use the built-in proxy support in RadzenSSRSViewer.
-To enable it set the <code>UseProxy</code> property to <code>true</code>and add the <code>ReportController</code> class below to your Blazor application.
+To enable it set the <code>UseProxy</code> property to <code>true</code> and add the <code>ReportController</code> class below to your Blazor application.
 </RadzenText>
 <RadzenTabs>
     <Tabs>

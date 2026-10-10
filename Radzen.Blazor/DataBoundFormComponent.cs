@@ -5,6 +5,7 @@ using Radzen.Blazor;
 using Radzen.Blazor.Rendering;
 using System;
 using System.Collections;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Threading.Tasks;
@@ -19,7 +20,12 @@ namespace Radzen
     /// <typeparam name="T"></typeparam>
     /// <seealso cref="Radzen.RadzenComponent" />
     /// <seealso cref="Radzen.IRadzenFormComponent" />
-    public class DataBoundFormComponent<T> : RadzenComponent, IRadzenFormComponent
+    [UnconditionalSuppressMessage(TrimMessages.Trimming, TrimMessages.IL2026, Justification = TrimMessages.DataTypePreserved)]
+    [UnconditionalSuppressMessage(TrimMessages.Trimming, TrimMessages.IL2067, Justification = TrimMessages.DataTypePreserved)]
+    [UnconditionalSuppressMessage(TrimMessages.Trimming, TrimMessages.IL2070, Justification = TrimMessages.DataTypePreserved)]
+    [UnconditionalSuppressMessage(TrimMessages.Trimming, TrimMessages.IL2072, Justification = TrimMessages.DataTypePreserved)]
+    public class DataBoundFormComponent<
+        [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.PublicFields)] T> : RadzenComponent, IRadzenFormComponent
     {
         /// <summary>
         /// Gets or sets the index of the tab.
@@ -47,14 +53,14 @@ namespace Radzen
         /// </summary>
         /// <value>The name.</value>
         [Parameter]
-        public string Name { get; set; }
+        public string? Name { get; set; }
 
         /// <summary>
         /// Gets or sets the placeholder.
         /// </summary>
         /// <value>The placeholder.</value>
         [Parameter]
-        public string Placeholder { get; set; }
+        public string? Placeholder { get; set; }
 
         /// <summary>
         /// Gets or sets a value indicating whether this <see cref="DataBoundFormComponent{T}"/> is disabled.
@@ -78,38 +84,52 @@ namespace Radzen
         public EventCallback<Radzen.LoadDataArgs> LoadData { get; set; }
 
         /// <summary>
+        /// Gets or sets a value indicating whether this instance loading indicator is shown.
+        /// </summary>
+        /// <value><c>true</c> if this instance loading indicator is shown; otherwise, <c>false</c>.</value>
+        [Parameter]
+        public bool IsLoading { get; set; }
+
+        /// <summary>
+        /// Gets or sets the loading template shown while <see cref="IsLoading"/> is <c>true</c>.
+        /// </summary>
+        /// <value>The loading template.</value>
+        [Parameter]
+        public RenderFragment? LoadingTemplate { get; set; }
+
+        /// <summary>
         /// The form
         /// </summary>
-        IRadzenForm _form;
+        IRadzenForm? form;
 
         /// <summary>
         /// Gets or sets the form.
         /// </summary>
         /// <value>The form.</value>
         [CascadingParameter]
-        public IRadzenForm Form
+        public IRadzenForm? Form
         {
             get
             {
-                return _form;
+                return form;
             }
             set
             {
-                _form = value;
-                _form?.AddComponent(this);
+                form = value;
+                form?.AddComponent(this);
             }
         }
 
         /// <summary>
         /// The value
         /// </summary>
-        object _value;
+        private T? _value;
         /// <summary>
         /// Gets or sets the value.
         /// </summary>
         /// <value>The value.</value>
         [Parameter]
-        public object Value
+        public T? Value
         {
             get
             {
@@ -117,9 +137,15 @@ namespace Radzen
             }
             set
             {
-                if (_value != value)
+                if (value == null || value.Equals("null"))
                 {
-                    _value = object.Equals(value, "null") ? null : value;
+                    _value = default;
+                    return;
+                }
+
+                if (!value.Equals(_value))
+                {
+                    _value = value;
                 }
             }
         }
@@ -159,22 +185,24 @@ namespace Radzen
         }
 
         /// <summary>
-        /// Gets or sets the text property.
+        /// Gets or sets the name of the property used as the display text of each item.
+        /// Required when <see cref="Data"/> contains objects and no <c>Template</c> is set; otherwise the item's
+        /// <see cref="object.ToString"/> result is displayed, which for plain classes is the type name.
         /// </summary>
         /// <value>The text property.</value>
         [Parameter]
-        public string TextProperty { get; set; }
+        public string? TextProperty { get; set; }
 
         /// <summary>
         /// The data
         /// </summary>
-        IEnumerable _data = null;
+        IEnumerable? _data;
         /// <summary>
         /// Gets or sets the data.
         /// </summary>
         /// <value>The data.</value>
         [Parameter]
-        public virtual IEnumerable Data
+        public virtual IEnumerable? Data
         {
             get
             {
@@ -185,7 +213,7 @@ namespace Radzen
                 if (_data != value)
                 {
                     _view = null;
-                    _value = null;
+                    _value = default;
                     _data = value;
                     StateHasChanged();
                 }
@@ -201,10 +229,21 @@ namespace Radzen
         }
 
         /// <summary>
+        /// Called when the <see cref="SearchText"/> parameter is changed by the parent component.
+        /// </summary>
+        protected virtual Task OnSearchTextChanged()
+        {
+            _view = null;
+            return Task.CompletedTask;
+        }
+
+        bool parametersSet;
+
+        /// <summary>
         /// Gets the query.
         /// </summary>
         /// <value>The query.</value>
-        protected virtual IQueryable Query
+        protected virtual IQueryable? Query
         {
             get
             {
@@ -216,7 +255,7 @@ namespace Radzen
         /// Gets or sets the search text
         /// </summary>
         [Parameter]
-        public string SearchText
+        public string? SearchText
         {
             get
             {
@@ -241,29 +280,30 @@ namespace Radzen
         /// <summary>
         /// The search text
         /// </summary>
-        internal string searchText;
+        internal string? searchText;
 
         /// <summary>
         /// The view
         /// </summary>
-        protected IQueryable _view = null;
+        protected IQueryable? _view;
         /// <summary>
         /// Gets the view.
         /// </summary>
         /// <value>The view.</value>
-        protected virtual IEnumerable View
+        protected virtual IEnumerable? View
         {
             get
             {
-                if (_view == null && Query != null)
+                var query = Query;
+                if (_view == null && query != null)
                 {
-                    if (!string.IsNullOrEmpty(searchText))
+                    if (!string.IsNullOrEmpty(searchText) && !string.IsNullOrEmpty(TextProperty))
                     {
-                        _view = Query.Where(TextProperty, searchText, FilterOperator, FilterCaseSensitivity);
+                        _view = query.Where(TextProperty, searchText, FilterOperator, FilterCaseSensitivity);
                     }
                     else
                     {
-                        _view = (typeof(IQueryable).IsAssignableFrom(Data.GetType())) ? Query.Cast<object>().ToList().AsQueryable() : Query;
+                        _view = Data is IQueryable ? query.Cast<object>().ToList().AsQueryable() : query;
                     }
                 }
 
@@ -271,25 +311,30 @@ namespace Radzen
             }
         }
 
+        internal IEnumerable? GetView() => View;
+
         /// <summary>
         /// Gets or sets the edit context.
         /// </summary>
         /// <value>The edit context.</value>
         [CascadingParameter]
-        public EditContext EditContext { get; set; }
+        public EditContext? EditContext { get; set; }
+
+        EditContext? previousEditContext;
 
         /// <summary>
         /// Gets the field identifier.
         /// </summary>
         /// <value>The field identifier.</value>
-        public FieldIdentifier FieldIdentifier { get; private set; }
+        [Parameter]
+        public FieldIdentifier FieldIdentifier { get; set; }
 
         /// <summary>
         /// Gets or sets the value expression.
         /// </summary>
         /// <value>The value expression.</value>
         [Parameter]
-        public Expression<Func<T>> ValueExpression { get; set; }
+        public Expression<Func<T>>? ValueExpression { get; set; }
         /// <summary>
         /// Set parameters as an asynchronous operation.
         /// </summary>
@@ -297,36 +342,48 @@ namespace Radzen
         /// <returns>A Task representing the asynchronous operation.</returns>
         public override async Task SetParametersAsync(ParameterView parameters)
         {
-            var searchTextChanged = parameters.DidParameterChange(nameof(SearchText), SearchText);
-            if (searchTextChanged)
-            {
-                searchText = parameters.GetValueOrDefault<string>(SearchText);
-            }
-
+            // check for changes before setting the properties through the base call
             var dataChanged = parameters.DidParameterChange(nameof(Data), Data);
+            var disabledChanged = parameters.DidParameterChange(nameof(Disabled), Disabled);
+            var searchTextChanged = parametersSet && parameters.DidParameterChange(nameof(SearchText), SearchText);
 
+            // allow the base class to process parameters and set the properties
+            // after this call the parameters object should be considered stale
+            await base.SetParametersAsync(parameters);
+
+            parametersSet = true;
+
+            // handle changes
             if (dataChanged)
             {
                 await OnDataChanged();
             }
 
-            var disabledChanged = parameters.DidParameterChange(nameof(Disabled), Disabled);
-
-            var result = base.SetParametersAsync(parameters);
-
-            if (EditContext != null && ValueExpression != null && FieldIdentifier.Model != EditContext.Model)
+            if (searchTextChanged)
             {
-                FieldIdentifier = FieldIdentifier.Create(ValueExpression);
+                await OnSearchTextChanged();
+            }
+
+            if (EditContext != null && (ValueExpression != null || ValueChanged.HasDelegate) &&
+                (FieldIdentifier.Model != EditContext.Model || EditContext != previousEditContext))
+            {
+                if (previousEditContext != null && previousEditContext != EditContext)
+                {
+                    previousEditContext.OnValidationStateChanged -= ValidationStateChanged;
+                }
+
+                FieldIdentifier = ValueExpression != null
+                    ? FieldIdentifier.Create(ValueExpression)
+                    : FieldIdentifier.Create(() => Value);
                 EditContext.OnValidationStateChanged -= ValidationStateChanged;
                 EditContext.OnValidationStateChanged += ValidationStateChanged;
+                previousEditContext = EditContext;
             }
 
             if (disabledChanged)
             {
                 FormFieldContext?.DisabledChanged(Disabled);
             }
-
-            await result;
         }
 
         /// <summary>
@@ -334,7 +391,7 @@ namespace Radzen
         /// </summary>
         /// <param name="sender">The sender.</param>
         /// <param name="e">The <see cref="ValidationStateChangedEventArgs"/> instance containing the event data.</param>
-        private void ValidationStateChanged(object sender, ValidationStateChangedEventArgs e)
+        private void ValidationStateChanged(object? sender, ValidationStateChangedEventArgs e)
         {
             StateHasChanged();
         }
@@ -346,21 +403,53 @@ namespace Radzen
         {
             base.Dispose();
 
-            if (EditContext != null)
+            if (previousEditContext != null)
+            {
+                previousEditContext.OnValidationStateChanged -= ValidationStateChanged;
+            }
+
+            if (EditContext != null && EditContext != previousEditContext)
             {
                 EditContext.OnValidationStateChanged -= ValidationStateChanged;
             }
 
             Form?.RemoveComponent(this);
+
+            GC.SuppressFinalize(this);
         }
 
         /// <summary>
         /// Gets the value.
         /// </summary>
         /// <returns>System.Object.</returns>
-        public virtual object GetValue()
+        public virtual object? GetValue()
         {
             return Value;
+        }
+
+        /// <summary>
+        /// Notifies the <see cref="EditContext"/> that the field has changed while validators observe the specified value.
+        /// The stored value is restored afterwards so that two-way binding parameter re-flow keeps working as expected.
+        /// </summary>
+        /// <param name="value">The value validators should observe during the notification.</param>
+        protected void NotifyFieldChanged(T? value)
+        {
+            if (FieldIdentifier.FieldName == null || EditContext == null)
+            {
+                return;
+            }
+
+            var current = _value;
+            _value = value;
+
+            try
+            {
+                EditContext.NotifyFieldChanged(FieldIdentifier);
+            }
+            finally
+            {
+                _value = current;
+            }
         }
 
 
@@ -382,13 +471,13 @@ namespace Radzen
 
         /// <summary> Provides support for RadzenFormField integration. </summary>
         [CascadingParameter]
-        public IFormFieldContext FormFieldContext { get; set; }
+        public IFormFieldContext? FormFieldContext { get; set; }
 
         /// <summary> Gets the current placeholder. Returns empty string if this component is inside a RadzenFormField.</summary>
-        protected string CurrentPlaceholder => FormFieldContext?.AllowFloatingLabel == true ? " " : Placeholder;
+        protected string? CurrentPlaceholder => FormFieldContext?.AllowFloatingLabel == true ? " " : Placeholder;
 
         /// <summary>
-        /// Handles the <see cref="E:ContextMenu" /> event.
+        /// Handles the ContextMenu event.
         /// </summary>
         /// <param name="args">The <see cref="MouseEventArgs"/> instance containing the event data.</param>
         /// <returns>Task.</returns>

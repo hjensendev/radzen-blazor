@@ -17,6 +17,11 @@ namespace Radzen.Blazor
         /// <value>The appointment move event callback.</value>
         EventCallback<SchedulerAppointmentMoveEventArgs> AppointmentMove { get; set; }
         /// <summary>
+        /// Gets or sets the appointment resize event callback.
+        /// </summary>
+        /// <value>The appointment resize event callback.</value>
+        EventCallback<SchedulerAppointmentResizeEventArgs> AppointmentResize { get => default; set { } }
+        /// <summary>
         /// Gets the appointments in the specified range.
         /// </summary>
         /// <param name="start">The start of the range.</param>
@@ -71,6 +76,17 @@ namespace Radzen.Blazor
         /// <param name="appointments">The appointments for this range.</param>
         Task<bool> SelectSlot(DateTime start, DateTime end, IEnumerable<AppointmentData> appointments);
         /// <summary>
+        /// Selects the specified slot of the specified resources.
+        /// </summary>
+        /// <param name="start">The start.</param>
+        /// <param name="end">The end.</param>
+        /// <param name="appointments">The appointments for this range.</param>
+        /// <param name="resources">The resource items the slot belongs to keyed by resource type name.</param>
+        Task<bool> SelectSlot(DateTime start, DateTime end, IEnumerable<AppointmentData> appointments, IDictionary<string, object>? resources)
+        {
+            return SelectSlot(start, end, appointments);
+        }
+        /// <summary>
         /// Selects the specified month.
         /// </summary>
         /// <param name="monthStart">The start of the month.</param>
@@ -100,8 +116,21 @@ namespace Radzen.Blazor
         /// </summary>
         /// <param name="start">The start of the slot.</param>
         /// <param name="end">The end of the slot.</param>
+        /// <param name="getAppointments">Function to return appointments for this range.</param>
         /// <returns>A dictionary containing the HTML attributes for the specified slot.</returns>
-        IDictionary<string, object> GetSlotAttributes(DateTime start, DateTime end);
+        IDictionary<string, object> GetSlotAttributes(DateTime start, DateTime end, Func<IEnumerable<AppointmentData>> getAppointments);
+        /// <summary>
+        /// Gets the slot HTML attributes for a slot of the specified resources.
+        /// </summary>
+        /// <param name="start">The start of the slot.</param>
+        /// <param name="end">The end of the slot.</param>
+        /// <param name="getAppointments">Function to return appointments for this range.</param>
+        /// <param name="resources">The resource items the slot belongs to keyed by resource type name.</param>
+        /// <returns>A dictionary containing the HTML attributes for the specified slot.</returns>
+        IDictionary<string, object> GetSlotAttributes(DateTime start, DateTime end, Func<IEnumerable<AppointmentData>> getAppointments, IDictionary<string, object>? resources)
+        {
+            return GetSlotAttributes(start, end, getAppointments);
+        }
         /// <summary>
         /// Renders the appointment.
         /// </summary>
@@ -117,6 +146,18 @@ namespace Radzen.Blazor
         Task MouseEnterAppointment(ElementReference reference, AppointmentData data);
 
         /// <summary>
+        /// Notifies the scheduler that the user has moved the mouse over the specified appointment, including mouse coordinates.
+        /// </summary>
+        /// <param name="reference">The DOM element reference.</param>
+        /// <param name="data">The appointment data.</param>
+        /// <param name="clientX">The horizontal viewport coordinate of the mouse pointer.</param>
+        /// <param name="clientY">The vertical viewport coordinate of the mouse pointer.</param>
+        Task MouseEnterAppointment(ElementReference reference, AppointmentData data, double clientX, double clientY)
+        {
+            return MouseEnterAppointment(reference, data);
+        }
+
+        /// <summary>
         /// Returns true if the scheduler has a mouse enter appointment listener.
         /// </summary>
         bool HasMouseEnterAppointmentDelegate();
@@ -127,12 +168,49 @@ namespace Radzen.Blazor
         bool HasAppointmentMoveDelegate();
 
         /// <summary>
+        /// Returns true if the scheduler has an AppointmentResize listener.
+        /// </summary>
+        bool HasAppointmentResizeDelegate() => false;
+
+        /// <summary>
         /// Notifies the scheduler that the user has moved the mouse out of the specified appointment.
         /// </summary>
         /// <param name="reference"></param>
         /// <param name="data"></param>
         /// <returns></returns>
         Task MouseLeaveAppointment(ElementReference reference, AppointmentData data);
+
+        /// <summary>
+        /// Notifies the scheduler that the user has moved the mouse out of the specified appointment, including mouse coordinates.
+        /// </summary>
+        /// <param name="reference">The DOM element reference.</param>
+        /// <param name="data">The appointment data.</param>
+        /// <param name="clientX">The horizontal viewport coordinate of the mouse pointer.</param>
+        /// <param name="clientY">The vertical viewport coordinate of the mouse pointer.</param>
+        Task MouseLeaveAppointment(ElementReference reference, AppointmentData data, double clientX, double clientY)
+        {
+            return MouseLeaveAppointment(reference, data);
+        }
+        /// <summary>
+        /// Gets the resource types of the scheduler in order of declaration. Views use them when grouping appointments by resource.
+        /// </summary>
+        /// <value>The resource types. Empty when the scheduler has no resources.</value>
+        IList<RadzenSchedulerResource> Resources => Array.Empty<RadzenSchedulerResource>();
+        /// <summary>
+        /// Adds a resource type. Called when a <see cref="RadzenSchedulerResource" /> is initialized.
+        /// </summary>
+        /// <param name="resource">The resource type to add.</param>
+        Task AddResource(RadzenSchedulerResource resource)
+        {
+            return Task.CompletedTask;
+        }
+        /// <summary>
+        /// Removes a resource type. Called when a <see cref="RadzenSchedulerResource" /> is disposed.
+        /// </summary>
+        /// <param name="resource">The resource type to remove.</param>
+        void RemoveResource(RadzenSchedulerResource resource)
+        {
+        }
         /// <summary>
         /// Reloads this instance.
         /// </summary>
@@ -147,5 +225,10 @@ namespace Radzen.Blazor
         /// </summary>
         /// <value>The culture.</value>
         CultureInfo Culture { get; set; }
+        /// <summary>
+        /// Gets the UI culture used for localized strings. Defaults to <see cref="Culture"/>.
+        /// </summary>
+        /// <value>The UI culture.</value>
+        CultureInfo UICulture => Culture;
     }
 }

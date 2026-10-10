@@ -1,4 +1,4 @@
-﻿@using Radzen.Blazor.Rendering
+@using Radzen.Blazor.Rendering
 @using System.Linq
 @using System.Collections
 @typeparam TValue
@@ -13,12 +13,21 @@
 }
 @if (Visible)
 {
-    <div @ref="@Element" style="@Style" @attributes="Attributes" class="@GetCssClass()" id="@GetId()">
-        @foreach (var item in allItems.Where(i => i.Visible))
+    <div @ref="@Element" style="@Style" @attributes="Attributes" class="@GetCssClass()" id="@GetId()"
+         role="@(Multiple ? "toolbar" : "radiogroup")" aria-orientation="@(Orientation == Orientation.Vertical ? "vertical" : "horizontal")"
+         aria-label="@AriaLabel" aria-labelledby="@AriaLabelledBy" aria-disabled="@(Disabled ? "true" : "false")" aria-activedescendant="@ActiveDescendantId"
+         @onfocus=@this.AsNonRenderingEventHandler(OnFocus) @onblur=@this.AsNonRenderingEventHandler(OnBlur)
+         tabindex="@(Disabled ? "-1" : $"{TabIndex}")" @onkeydown="@(args => OnKeyPress(args))" @onkeydown:preventDefault=preventKeyPress @onkeydown:stopPropagation="stopKeydownPropagation">
+        @foreach (var item in NavigableItems)
         {
-            <div @ref="@item.Element" id="@item.GetItemId()"
-                @onclick="@(args => SelectItem(item))" @onkeypress="@(args => OnKeyPress(args, SelectItem(item)))" @onkeypress:preventDefault=preventKeyPress @onkeypress:stopPropagation
-                @attributes="item.Attributes" style="@item.Style" class=@ButtonClassList(item) aria-label="@item.Text" tabindex="@(Disabled || item.Disabled ? "-1" : $"{TabIndex}")">
+            <button type="button" @ref="@item.Element" id="@item.GetItemId()"
+                @onclick="@(args => SelectItem(item))"
+                @attributes="item.Attributes" style="@item.Style" class=@ButtonClass(item)
+                role="@(Multiple ? null : "radio")"
+                aria-label="@(item.AriaLabel ?? item.Text)"
+                aria-pressed="@(Multiple ? (IsSelected(item) ? "true" : "false") : null)"
+                aria-checked="@(Multiple ? null : (IsSelected(item) ? "true" : "false"))"
+                disabled="@(Disabled || item.Disabled)" tabindex="-1">
                 @if (item.Template != null)
                 {
                     @item.Template(item)
@@ -27,15 +36,18 @@
                 {
                     @if (!string.IsNullOrEmpty(item.Icon))
                     {
-                        <i class="notranslate rzi rz-navigation-item-icon" style="margin-right:2px;@(!string.IsNullOrEmpty(item.IconColor) ? $"color:{item.IconColor}" : "")">@((MarkupString)item.Icon)</i>
+                        <i class="notranslate rz-button-icon-left rzi" aria-hidden="true" style="@(!string.IsNullOrEmpty(item.IconColor) ? $"color:{item.IconColor}" : null)">@item.Icon</i>
                     }
                     @if (!string.IsNullOrEmpty(item.Image))
                     {
-                        <img class="rz-navigation-item-icon" src="@item.Image" style="@item.ImageStyle" alt=@item.ImageAlternateText/>
+                        <img class="notranslate rz-button-icon-left rzi" src="@item.Image" alt=@item.ImageAlternateText/>
                     }
-                    <span class="rz-button-text">@item.Text</span>
+                    @if (!string.IsNullOrEmpty(item.Text))
+                    {
+                        <span class="rz-button-text">@item.Text</span>
+                    }
                 }
-            </div>
+            </button>
         }
     </div>
 }

@@ -17,6 +17,13 @@ namespace Radzen
         /// The end of the slot.
         /// </summary>
         public DateTime End { get; set; }
+        // used to pass a function to get appointments on demand.
+        internal Func<IEnumerable<AppointmentData>>? getAppointments;
+        private IEnumerable<AppointmentData>? appointments;
+        /// <summary>
+        /// List of appointments.
+        /// </summary>
+        public IEnumerable<AppointmentData> Appointments => appointments ??= getAppointments!();
         /// <summary>
         /// HTML attributes to apply to the slot element.
         /// </summary>
@@ -24,6 +31,17 @@ namespace Radzen
         /// <summary>
         /// The current view.
         /// </summary>
-        public ISchedulerView View { get; set;}
+        public ISchedulerView? View { get; set;}
+        /// <summary>
+        /// The innermost resource item associated with the slot. Set when the slot belongs to a resource in a view which groups appointments by resource
+        /// via <see cref="SchedulerViewBase.GroupByResource" />; otherwise <c>null</c>.
+        /// </summary>
+        public object? Resource { get; set; }
+        /// <summary>
+        /// The resource items associated with the slot keyed by resource type <see cref="RadzenSchedulerResource.Name" /> - one entry per grouping level.
+        /// Set when the slot belongs to a resource in a view which groups appointments by resource; otherwise <c>null</c>.
+        /// </summary>
+        public IDictionary<string, object>? Resources { get; set; }
+
     }
 }

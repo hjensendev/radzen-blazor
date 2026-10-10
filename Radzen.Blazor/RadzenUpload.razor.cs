@@ -1,4 +1,5 @@
-﻿using Microsoft.AspNetCore.Components;
+using System.Diagnostics.CodeAnalysis;
+using Microsoft.AspNetCore.Components;
 using Microsoft.JSInterop;
 using Radzen.Blazor.Rendering;
 using System;
@@ -9,44 +10,75 @@ using System.Threading.Tasks;
 namespace Radzen.Blazor
 {
     /// <summary>
-    /// RadzenUpload component.
+    /// A file upload component with progress tracking, multiple file support, and drag-and-drop capability.
+    /// RadzenUpload provides a full-featured file upload interface with automatic or manual upload, server communication, and comprehensive event handling.
+    /// Handles file selection and upload to a server endpoint with automatic upload on file selection or manual triggering via Upload() method,
+    /// real-time upload progress with percentage and bytes loaded, file type restriction via Accept property (MIME types or extensions),
+    /// custom authentication or HTTP headers, Complete/Error/Progress/Change events for tracking upload lifecycle,
+    /// automatic image preview for image files, file removal support, and built-in drag-and-drop for file selection.
+    /// Uploads files to the URL endpoint via HTTP POST multipart/form-data. Server-side endpoint must accept file uploads and return appropriate responses.
     /// </summary>
     /// <example>
+    /// Basic upload with auto-upload:
     /// <code>
-    /// &lt;RadzenUpload Url="upload/single" Progress=@(args => OnProgress(args, "Single file upload"))/&gt;
+    /// &lt;RadzenUpload Url="api/upload" Change=@OnChange Complete=@OnComplete /&gt;
     /// @code {
-    ///  void OnProgress(UploadProgressArgs args, string name)
-    ///  {
-    ///    this.info = $"% '{name}' / {args.Loaded} of {args.Total} bytes.";
-    ///    this.progress = args.Progress;
-    ///    if (args.Progress == 100)
-    ///    {
-    ///        console.Clear();
+    ///     void OnChange(UploadChangeEventArgs args)
+    ///         => Console.WriteLine($"Selected {args.Files?.Count() ?? 0} files");
     ///
-    ///        foreach (var file in args.Files)
-    ///        {
-    ///            console.Log($"Uploaded: {file.Name} / {file.Size} bytes");
-    ///        }
-    ///    }
-    ///  }
+    ///     void OnComplete(UploadCompleteEventArgs args)
+    ///         => Console.WriteLine(args.Cancelled ? "Upload cancelled" : "Upload complete");
     /// }
+    /// </code>
+    /// Manual upload with progress tracking:
+    /// <code>
+    /// &lt;RadzenUpload @ref=upload Url="api/upload" Auto="false" Multiple="true" Progress=@OnProgress /&gt;
+    /// &lt;RadzenButton Text="Upload" Click=@(() => upload.Upload()) /&gt;
+    /// @code {
+    ///     RadzenUpload upload;
+    ///     void OnProgress(UploadProgressArgs args)
+    ///     {
+    ///         Console.WriteLine($"Progress: {args.Progress}% ({args.Loaded}/{args.Total} bytes)");
+    ///     }
+    /// }
+    /// </code>
+    /// Upload with file type filtering:
+    /// <code>
+    /// &lt;RadzenUpload Url="api/upload/images" Accept="image/*" MaxFileSize="5000000" /&gt;
     /// </code>
     /// </example>
     public partial class RadzenUpload : RadzenComponent
     {
+        IJSObjectReference? _jsRef;
+        int _jsRefVersion;
+
+        /// <inheritdoc />
+        public override void Dispose()
+        {
+            base.Dispose();
+            _jsRefVersion++;
+            var jsRef = _jsRef;
+            _jsRef = null;
+            jsRef?.InvokeVoid("dispose");
+            jsRef?.DisposeFireAndForget();
+            GC.SuppressFinalize(this);
+        }
+
+        private string? imageAlternateText;
+
         /// <summary>
         /// Gets or sets the text.
         /// </summary>
         /// <value>The text.</value>
         [Parameter]
-        public string ImageAlternateText { get; set; } = "image";
+        public string ImageAlternateText { get => imageAlternateText ?? Localize(nameof(RadzenStrings.Upload_ImageAlternateText)); set => imageAlternateText = value; }
 
         /// <summary>
         /// Specifies additional custom attributes that will be rendered by the input.
         /// </summary>
         /// <value>The attributes.</value>
         [Parameter]
-        public IReadOnlyDictionary<string, object> InputAttributes { get; set; }
+        public IReadOnlyDictionary<string, object>? InputAttributes { get; set; }
 
         /// <summary>
         /// Gets file input reference.
@@ -58,7 +90,7 @@ namespace Radzen.Blazor
         /// </summary>
         /// <value>The name.</value>
         [Parameter]
-        public string Name { get; set; }
+        public string? Name { get; set; }
 
         /// <summary>
         /// Gets or sets a value indicating whether this <see cref="RadzenUpload"/> upload is automatic.
@@ -67,40 +99,78 @@ namespace Radzen.Blazor
         [Parameter]
         public bool Auto { get; set; } = true;
 
-        /// <summary>
-        /// Gets or sets the choose button text.
-        /// </summary>
-        /// <value>The choose button text.</value>
-        [Parameter]
-        public string ChooseText { get; set; } = "Choose";
+        private string? chooseText;
 
         /// <summary>
         /// Gets or sets the choose button text.
         /// </summary>
         /// <value>The choose button text.</value>
         [Parameter]
-        public string DeleteText { get; set; } = "Delete";
+        public string ChooseText { get => chooseText ?? Localize(nameof(RadzenStrings.Upload_ChooseText)); set => chooseText = value; }
+
+        private string? deleteText;
+
+        /// <summary>
+        /// Gets or sets the choose button text.
+        /// </summary>
+        /// <value>The choose button text.</value>
+        [Parameter]
+        public string DeleteText { get => deleteText ?? Localize(nameof(RadzenStrings.Upload_DeleteText)); set => deleteText = value; }
 
         /// <summary>
         /// Gets or sets the URL.
         /// </summary>
         /// <value>The URL.</value>
         [Parameter]
-        public string Url { get; set; }
+        public string? Url { get; set; }
 
+        /// <summary>
+        /// Specifies the HTTP method used for uploading files to the defined <see cref="Url"/> endpoint.
+        /// <para>
+        /// Common values are <c>POST</c> (default) and <c>PUT</c>.
+        /// </para>
+        /// <para>
+        /// If the <see cref="Url"/> parameter is not set, this property is ignored.
+        /// </para>
+        /// <para>
+        /// Defaults to <c>POST</c>.
+        /// </para>
+        /// </summary>
+        /// <value>The HTTP method for file upload requests.</value>
+        [Parameter]
+        public string Method { get; set; } = "POST";
+        
+        /// <summary>
+        /// Enables streaming upload mode for large files to the specified <see cref="Url"/>.
+        /// <para>
+        /// When <c>true</c>, files are uploaded as raw binary streams instead of <c>multipart/form-data</c>.
+        /// Only a single file can be uploaded at a time in streaming mode.
+        /// </para>
+        /// <para>
+        /// When <c>false</c> (default), files are uploaded as <c>multipart/form-data</c> (standard form upload),
+        /// and multiple files can be uploaded simultaneously if <see cref="Multiple"/> is enabled.
+        /// </para>
+        /// <para>
+        /// This property is ignored if <see cref="Url"/> is not set.
+        /// </para>
+        /// </summary>
+        /// <value><c>true</c> to stream file data directly; otherwise, <c>false</c> (default).</value>
+        [Parameter]
+        public bool Stream { get; set; }
+        
         /// <summary>
         /// Gets or sets the parameter name. If not set 'file' parameter name will be used for single file and 'files' for multiple files.
         /// </summary>
         /// <value>The parameter name.</value>
         [Parameter]
-        public string ParameterName { get; set; }
+        public string? ParameterName { get; set; }
 
         /// <summary>
         /// Gets or sets the accepted MIME types.
         /// </summary>
         /// <value>The accepted MIME types.</value>
         [Parameter]
-        public string Accept { get; set; }
+        public string? Accept { get; set; }
 
         /// <summary>
         /// Gets or sets a value indicating whether this <see cref="RadzenUpload"/> is multiple.
@@ -114,14 +184,14 @@ namespace Radzen.Blazor
         /// </summary>
         /// <value>The icon.</value>
         [Parameter]
-        public string Icon { get; set; }
+        public string? Icon { get; set; }
 
         /// <summary>
         /// Gets or sets the icon color.
         /// </summary>
         /// <value>The icon color.</value>
         [Parameter]
-        public string IconColor { get; set; }
+        public string? IconColor { get; set; }
 
         /// <summary>
         /// Gets or sets the maximum number of files.
@@ -138,32 +208,48 @@ namespace Radzen.Blazor
         public bool Disabled { get; set; }
 
         /// <summary>
+        /// Gets or sets the tab order index for keyboard navigation.
+        /// Controls the order in which the Choose button receives focus when the user presses the Tab key.
+        /// Lower values receive focus first. Use -1 to exclude from tab navigation.
+        /// </summary>
+        /// <value>The tab index. Default is 0 (natural tab order).</value>
+        [Parameter]
+        public int TabIndex { get; set; } = 0;
+
+        /// <summary>
         /// Gets the choose class list.
         /// </summary>
         /// <value>The choose class list.</value>
-        ClassList ChooseClassList => ClassList.Create("rz-fileupload-choose rz-button")
-                                              .AddDisabled(Disabled);
+        string ChooseClassList => ClassList.Create("rz-fileupload-choose rz-button")
+                                           .AddDisabled(Disabled)
+                                           .ToString();
 
         /// <summary>
         /// Gets the button class list.
         /// </summary>
         /// <value>The button class list.</value>
-        ClassList ButtonClassList => ClassList.Create("rz-button rz-button-icon-only rz-base rz-shade-default")
-                                              .AddDisabled(Disabled);
+        string ButtonClassList => ClassList.Create("rz-button rz-button-icon-only rz-base rz-shade-default")
+                                            .AddDisabled(Disabled)
+                                            .ToString();
 
         /// <summary>
         /// Gets or sets the child content.
         /// </summary>
         /// <value>The child content.</value>
         [Parameter]
-        public RenderFragment ChildContent { get; set; }
+        public RenderFragment? ChildContent { get; set; }
 
         /// <summary>
         /// Uploads this instance selected files.
         /// </summary>
         public async Task Upload()
         {
-            await JSRuntime.InvokeAsync<string>("Radzen.upload", fileUpload, Url, Multiple, false, ParameterName);
+            if (JSRuntime == null)
+            {
+                return;
+            }
+
+            await JSRuntime.InvokeAsync<string>("Radzen.upload", fileUpload, Url, Multiple, false, ParameterName, Method, Stream);
         }
 
         readonly IDictionary<string, string> headers = new Dictionary<string, string>();
@@ -184,13 +270,26 @@ namespace Radzen.Blazor
             }
         }
 
-        private bool visibleChanged = false;
+        private bool visibleChanged;
         private bool firstRender = true;
+
+        /// <inheritdoc />
+        bool _jsParamsChanged;
 
         /// <inheritdoc />
         public override async Task SetParametersAsync(ParameterView parameters)
         {
             visibleChanged = parameters.DidParameterChange(nameof(Visible), Visible);
+
+            if (parameters.DidParameterChange(nameof(Url), Url) ||
+                parameters.DidParameterChange(nameof(Auto), Auto) ||
+                parameters.DidParameterChange(nameof(Multiple), Multiple) ||
+                parameters.DidParameterChange(nameof(ParameterName), ParameterName) ||
+                parameters.DidParameterChange(nameof(Method), Method) ||
+                parameters.DidParameterChange(nameof(Stream), Stream))
+            {
+                _jsParamsChanged = true;
+            }
 
             await base.SetParametersAsync(parameters);
 
@@ -204,19 +303,53 @@ namespace Radzen.Blazor
         }
 
         /// <inheritdoc />
+        [DynamicDependency(DynamicallyAccessedMemberTypes.All, typeof(FileInfo))]
+        [DynamicDependency(DynamicallyAccessedMemberTypes.All, typeof(PreviewFileInfo))]
         protected override async Task OnAfterRenderAsync(bool firstRender)
         {
             await base.OnAfterRenderAsync(firstRender);
 
             this.firstRender = firstRender;
 
-            if (firstRender || visibleChanged)
+            if (firstRender || visibleChanged || _jsParamsChanged)
             {
                 visibleChanged = false;
 
-                if (Visible)
+                if (Visible && JSRuntime != null)
                 {
                     await JSRuntime.InvokeVoidAsync("Radzen.uploads", Reference, Name ?? GetId());
+
+                    _jsParamsChanged = false;
+
+                    var version = ++_jsRefVersion;
+                    var jsRef = _jsRef;
+                    _jsRef = null;
+
+                    if (jsRef != null)
+                    {
+                        await jsRef.InvokeVoidAsync("dispose");
+                        await jsRef.DisposeAsync();
+                    }
+
+                    if (version != _jsRefVersion)
+                    {
+                        return;
+                    }
+
+                    var created = await JSRuntime.InvokeAsync<IJSObjectReference>(
+                        "Radzen.createUpload", Element,
+                        !string.IsNullOrEmpty(Url) ? Url : null, Auto, Multiple,
+                        ParameterName, Method, Stream);
+
+                    if (version == _jsRefVersion)
+                    {
+                        _jsRef = created;
+                    }
+                    else if (created != null)
+                    {
+                        await created.InvokeVoidAsync("dispose");
+                        await created.DisposeAsync();
+                    }
                 }
             }
         }
@@ -269,7 +402,7 @@ namespace Radzen.Blazor
         {
             get
             {
-                return files.Any();
+                return files.Count > 0;
             }
         }
 
@@ -283,7 +416,7 @@ namespace Radzen.Blazor
                 await OnRemove(files[0], false);
             }
 
-            await Change.InvokeAsync(new UploadChangeEventArgs() { Files = files.Select(f => new FileInfo() { Name = f.Name, Size = f.Size }).ToList() });
+            await Change.InvokeAsync(CreateUploadChangeEventArgs(files));
         }
 
         /// <summary>
@@ -308,9 +441,18 @@ namespace Radzen.Blazor
         /// <param name="fireChangeEvent">If the linked <see cref="Change" /> event should be fired as a result of this removal (default: true)</param>
         protected async System.Threading.Tasks.Task OnRemove(PreviewFileInfo file, bool fireChangeEvent = true)
         {
+            ArgumentNullException.ThrowIfNull(file);
             files.Remove(file);
-            await JSRuntime.InvokeVoidAsync("Radzen.removeFileFromUpload", fileUpload, file.Name);
-            if (fireChangeEvent) await Change.InvokeAsync(new UploadChangeEventArgs() { Files = files.Select(f => new FileInfo() { Name = f.Name, Size = f.Size }).ToList() });
+
+            if (JSRuntime != null)
+            {
+                await JSRuntime.InvokeVoidAsync("Radzen.removeFileFromUpload", Reference, file.Name, Name ?? GetId());
+            }
+
+            if (fireChangeEvent)
+            {
+                await Change.InvokeAsync(CreateUploadChangeEventArgs(files));
+            }
         }
 
         /// <summary>
@@ -320,14 +462,16 @@ namespace Radzen.Blazor
         [JSInvokable("RadzenUpload.OnChange")]
         public async System.Threading.Tasks.Task OnChange(IEnumerable<PreviewFileInfo> files)
         {
-            if (files == null || !files.Any())
+            var fileList = files?.ToList();
+
+            if (fileList == null || fileList.Count == 0)
             {
                 return;
             }
 
-            this.files = files.ToList();
+            this.files = fileList;
 
-            await Change.InvokeAsync(new UploadChangeEventArgs() { Files = files.Select(f => new FileInfo() { Name = f.Name, Size = f.Size }).ToList() });
+            await Change.InvokeAsync(CreateUploadChangeEventArgs(files ?? Enumerable.Empty<FileInfo>()));
 
             await InvokeAsync(StateHasChanged);
         }
@@ -357,7 +501,7 @@ namespace Radzen.Blazor
         [JSInvokable("RadzenUpload.OnComplete")]
         public async System.Threading.Tasks.Task OnComplete(string response, bool cancelled)
         {
-            System.Text.Json.JsonDocument doc = null;
+            System.Text.Json.JsonDocument? doc = null;
 
             if (!string.IsNullOrEmpty(response))
             {
@@ -397,14 +541,38 @@ namespace Radzen.Blazor
                 return;
             }
 
-            var files = Multiple ? args.GetMultipleFiles(MaxFileCount).Select(f => new FileInfo(f))
-                : new FileInfo[] { new FileInfo (args.File) };
+            IEnumerable<FileInfo> files = Enumerable.Empty<FileInfo>();
 
-            this.files = files.Select(f => new PreviewFileInfo() { Name = f.Name, Size = f.Size  }).ToList();
+            if (Multiple)
+            {
+                try
+                {
+                    files = args.GetMultipleFiles(MaxFileCount).Select(f => new FileInfo(f));
+                }
+                catch
+                {
+                    await Error.InvokeAsync(new UploadErrorEventArgs() { Message = $"Maximum number of files exceeded. Maximum allowed is {MaxFileCount}." });
+                    return;
+                }
+            }
+            else
+            {
+                files = new FileInfo[] { new FileInfo(args.File) };
+            }
 
-            await Change.InvokeAsync(new UploadChangeEventArgs() { Files = files });
+            this.files = files.Where(f => f.Source != null).Select(f => new PreviewFileInfo(f.Source!) { Name = f.Name, Size = f.Size }).ToList();
+
+            await Change.InvokeAsync(CreateUploadChangeEventArgs(files));
 
             await InvokeAsync(StateHasChanged);
         }
+
+        /// <summary>
+        /// Creates the upload change event args.
+        /// </summary>
+        /// <param name="files"></param>
+        /// <returns></returns>
+        public UploadChangeEventArgs CreateUploadChangeEventArgs(IEnumerable<FileInfo> files)
+           => new UploadChangeEventArgs() { Files = files };
     }
 }

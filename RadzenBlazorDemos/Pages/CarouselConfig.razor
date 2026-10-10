@@ -15,6 +15,14 @@
                 Interval
                 <RadzenNumeric @bind-Value=@interval aria-label="interval" />
             </RadzenStack>
+            <RadzenStack Orientation="Orientation.Vertical" Gap="4px">
+                Animation duration
+                <RadzenNumeric @bind-Value=@animationDuration TValue="double?" aria-label="animation duration" />
+            </RadzenStack>
+            <RadzenStack Orientation="Orientation.Vertical" Gap="4px">
+                Items per page
+                <RadzenNumeric @bind-Value=@itemsPerPage Min="1" Max="6" aria-label="items per page" />
+            </RadzenStack>
             <RadzenStack Orientation="Orientation.Vertical" Gap="8px">
                 Auto-cycle
                 <RadzenSwitch @bind-Value="@auto" InputAttributes="@(new Dictionary<string,object>(){ { "aria-label", "auto-cycle" }})" />
@@ -30,7 +38,7 @@
         </RadzenStack>
     </RadzenCard>
     <RadzenCard class="rz-p-4" Variant="Variant.Outlined">
-        <RadzenCarousel @ref=carousel @bind-SelectedIndex="@selectedIndex" Auto="@auto" Interval="@interval" PagerOverlay="false" ButtonShade="Shade.Default" Style="height:500px"
+        <RadzenCarousel @ref=carousel @bind-SelectedIndex="@selectedIndex" Auto="@auto" Interval="@interval" AnimationDuration="@animationDuration" ItemsPerPage="@itemsPerPage" PagerOverlay="false" ButtonShade="Shade.Default" Style="height:500px"
                 Change="@(args => console.Log($"SelectedIndex changed to {args}"))">
             <Items>
                 @foreach (var orderID in orderIDs)
@@ -53,6 +61,8 @@
 
     bool auto = true;
     double interval = 4000;
+    double? animationDuration;
+    int itemsPerPage = 1;
     string toggleText = "Stop";
 
     bool started = true;

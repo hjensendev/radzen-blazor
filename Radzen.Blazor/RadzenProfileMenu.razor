@@ -1,13 +1,17 @@
-﻿@inherits RadzenComponentWithChildren
+@inherits RadzenComponentWithChildren
 
 @if (Visible)
 {
-    <ul @ref="@Element" style="@Style" @attributes="Attributes" class="@GetCssClass()" id="@GetId()" 
-        tabindex="0" @onkeydown="@OnKeyPress" @onkeydown:preventDefault=preventKeyPress @onkeydown:stopPropagation>
-        <li class="rz-navigation-item">
-            <div class="rz-navigation-item-wrapper" onclick="Radzen.toggleMenuItem(this)">
+    <ul @ref="@Element" style="@Style" @attributes="Attributes" class="@GetCssClass()" id="@GetId()"
+        role="presentation" tabindex="-1">
+        <li class="@(Collapsed ? "rz-navigation-item" : "rz-navigation-item rz-navigation-item-active")" role="presentation">
+            <div @ref="@toggleElement" class="@(Collapsed ? "rz-navigation-item-wrapper" : "rz-navigation-item-wrapper rz-navigation-item-wrapper-active")" role="button" tabindex="0" aria-haspopup="menu"
+                 aria-label="@ToggleAriaLabel"
+                 aria-expanded="@((!Collapsed).ToString().ToLowerInvariant())" aria-controls="@($"{GetId()}-menu")"
+                 @onclick="@Toggle"
+                 @onkeydown="@OnKeyPress" @onkeydown:preventDefault=preventKeyPress @onkeydown:stopPropagation="stopKeydownPropagation">
                 <div class="rz-navigation-item-link">
-                    <div class="item-text" @onkeydown:stopPropagation>
+                    <div class="item-text" @onkeydown:stopPropagation="stopGuardKeydownPropagation" @onkeydown="OnGuardKeyDown">
                         @if (Template != null)
                         {
                             @Template
@@ -15,11 +19,14 @@
                     </div>
                     @if (ShowIcon)
                     {
-                        <i class="notranslate rzi rz-navigation-item-icon-children" style="@iconStyle">keyboard_arrow_down</i>
+                        <i class=@ToggleClass aria-hidden="true">keyboard_arrow_down</i>
                     }
                 </div>
             </div>
-            <ul class="rz-navigation-menu" style="@contentStyle" @onkeydown:stopPropagation>
+            <ul @ref="@menuElement" id="@($"{GetId()}-menu")" class="rz-navigation-menu" role="menu" style="@contentStyle"
+                tabindex="-1" aria-label="@ToggleAriaLabel" aria-hidden="@(Collapsed ? "true" : "false")"
+                aria-activedescendant="@ActiveDescendantId"
+                @onkeydown="@OnKeyPress" @onkeydown:preventDefault=preventKeyPress @onkeydown:stopPropagation="stopKeydownPropagation">
                 <CascadingValue Value=this>
                     @ChildContent
                 </CascadingValue>

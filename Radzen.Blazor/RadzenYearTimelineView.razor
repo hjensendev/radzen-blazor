@@ -6,7 +6,7 @@
 @code {
     public override RenderFragment Render()
     {
-        var appointments = Scheduler.GetAppointmentsInRange(StartDate, EndDate);
+        var appointments = Scheduler?.GetAppointmentsInRange(StartDate, EndDate) ?? Enumerable.Empty<AppointmentData>();
 
         var maxAppointmentsInSlot = 0;
 
@@ -18,6 +18,26 @@
         {
             var slotHeight = 100.0;
             maxAppointmentsInSlot = Convert.ToInt32(Math.Floor(slotHeight / 24)) - 1;
+        }
+
+        if (HasResourceGroups)
+        {
+            var maxInSlot = maxAppointmentsInSlot;
+
+            return @<CascadingValue Value=@Scheduler>
+                <ResourceGroups Types=@ResourceTypes Orientation=@GroupOrientation>
+                    <ChildContent Context="path">
+                        <YearTimelineView StartDate=@StartDate
+                            EndDate=@EndDate
+                            StartMonth=@StartMonth
+                            MaxAppointmentsInSlot=@maxInSlot
+                            MoreText=@MoreText
+                            Appointments=@AppointmentsForResources(appointments, path)
+                            Resources=@path
+                            AppointmentMove=OnAppointmentMove />
+                    </ChildContent>
+                </ResourceGroups>
+            </CascadingValue>;
         }
 
         return @<CascadingValue Value=@Scheduler>

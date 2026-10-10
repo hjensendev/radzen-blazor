@@ -1,0 +1,31 @@
+<linker>
+	<!--  AntiforgeryRequestToken deserialization issues - https://github.com/dotnet/aspnetcore/issues/64693  -->
+	<assembly fullname="Microsoft.AspNetCore.Components.Web">
+		<type fullname="Microsoft.AspNetCore.Components.Forms.AntiforgeryRequestToken" preserve="all"/>
+	</assembly>
+	<assembly fullname="Microsoft.AspNetCore.Components.WebAssembly">
+		<type fullname="Microsoft.AspNetCore.Components.Forms.DefaultAntiforgeryStateProvider" preserve="all"/>
+	</assembly>
+	<!-- The runtime Razor/Roslyn compiler behind Edit Source / Playground relies on the [EventHandler] metadata (e.g. oninput -> ChangeEventArgs) on Microsoft.AspNetCore.Components.Web.EventHandlers to recognize event attributes. Trimming removes that compile-time-only class, so handlers like @oninput=@(args => ...) become literal attributes and fail with CS1660 "Cannot convert lambda expression to type 'bool'". Preserve the assembly so demos compile online. -->
+	<assembly fullname="Microsoft.AspNetCore.Components.Web" preserve="all"/>
+	<!-- The following types are referenced only by demo source compiled at runtime (Edit Source / Playground), so trimming removes members the runtime compiler needs. Preserve them so those demos compile online. -->
+	<assembly fullname="System.Private.CoreLib">
+		<type fullname="System.Math" preserve="all"/>
+		<!-- Interpolated strings with alignment or format specifiers lower to AppendFormatted overloads the prebuilt demos do not all use, so the trimmer drops them and runtime-compiled demos fail to bind. -->
+		<type fullname="System.Runtime.CompilerServices.DefaultInterpolatedStringHandler" preserve="all"/>
+			<type fullname="System.Runtime.CompilerServices.AsyncTaskMethodBuilder" preserve="all"/>
+			<type fullname="System.Runtime.CompilerServices.AsyncTaskMethodBuilder`1" preserve="all"/>
+			<type fullname="System.Runtime.CompilerServices.AsyncVoidMethodBuilder" preserve="all"/>
+			<type fullname="System.Runtime.CompilerServices.AsyncValueTaskMethodBuilder" preserve="all"/>
+			<type fullname="System.Runtime.CompilerServices.AsyncValueTaskMethodBuilder`1" preserve="all"/>
+			<type fullname="System.Runtime.CompilerServices.AsyncIteratorMethodBuilder" preserve="all"/>
+	</assembly>
+	<assembly fullname="System.ComponentModel.Annotations">
+		<type fullname="System.ComponentModel.DataAnnotations.DisplayAttribute" preserve="all"/>
+	</assembly>
+	<assembly fullname="Radzen.Blazor">
+		<type fullname="Radzen.Colors" preserve="all"/>
+		<type fullname="Radzen.MarkdownEditorCommands" preserve="all"/>
+	</assembly>
+</linker>
+
