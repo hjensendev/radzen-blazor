@@ -105,5 +105,9 @@ $rz-outline-color: var(--rz-secondary) !default;
 // Scrollbar
 $scrollbar-color: var(--rz-primary-lighter) !default;
 
+// Charts
+// Radzen 12 lowered the area fill opacity from 0.8 to 0.6; keep the Sicra look.
+$chart-area-opacity: 0.8 !default;
+
 @import 'fonts';
 @import 'components';

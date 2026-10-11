@@ -101,5 +101,9 @@ $rz-outline-offset: 2px !default;
 $rz-outline-width: 2px !default;
 $rz-outline-color: var(--rz-secondary) !default;
 
+// Charts
+// Radzen 12 lowered the area fill opacity from 0.8 to 0.6; keep the Sicra look.
+$chart-area-opacity: 0.8 !default;
+
 @import 'fonts';
 @import 'components';
